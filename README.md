@@ -6,7 +6,6 @@ The package provides:
 
 - a web UI for interactive board and log generation, 3D inspection, MATLAB export, image-map export, and photorealistic face export
 - a CLI for batch board exports, knot-sequence model data preparation/training/evaluation, and photorealistic diffusion training
-- a MATLAB visualization script for exported simulation `.mat` files
 
 ## Start
 
