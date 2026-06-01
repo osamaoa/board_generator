@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Board Generator logo">
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#eef4f8" />
+      <stop offset="1" stop-color="#c7d6e3" />
+    </linearGradient>
+    <linearGradient id="board" x1="0" x2="1" y1="0.1" y2="0.9">
+      <stop offset="0" stop-color="#e6bf7f" />
+      <stop offset="1" stop-color="#b6783d" />
+    </linearGradient>
+    <linearGradient id="edge" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="#9d5f2d" />
+      <stop offset="1" stop-color="#76411e" />
+    </linearGradient>
+  </defs>
+
+  <rect width="64" height="64" rx="14" fill="url(#bg)" />
+  <rect x="9" y="14" width="46" height="36" rx="8" fill="url(#board)" stroke="#73431f" stroke-width="2" />
+  <rect x="12" y="17" width="40" height="30" rx="6" fill="none" stroke="rgba(255,255,255,0.35)" stroke-width="1.5" />
+
+  <path d="M16 24c8-5 22-5 32 0" fill="none" stroke="#8a5328" stroke-linecap="round" stroke-width="2" opacity="0.8" />
+  <path d="M16 31c8-5 22-5 32 0" fill="none" stroke="#8a5328" stroke-linecap="round" stroke-width="2" opacity="0.72" />
+  <path d="M16 38c8-5 22-5 32 0" fill="none" stroke="#8a5328" stroke-linecap="round" stroke-width="2" opacity="0.66" />
+
+  <path d="M36 18v28" fill="none" stroke="#2dba5f" stroke-linecap="round" stroke-width="4" />
+  <circle cx="36" cy="29" r="5.5" fill="#1f8f48" stroke="#edf8f0" stroke-width="1.6" />
+  <path d="M33.5 26.5c1.4-1.8 4.2-1.9 5.7-.3c1.9 2 1.1 4.7-.8 6.2c-1.9-1.6-3.4-3.4-4.9-5.9Z" fill="#9be0b1" opacity="0.9" />
+
+  <path d="M55 18l-4 2.3v23.4L55 46" fill="url(#edge)" opacity="0.9" />
+</svg>

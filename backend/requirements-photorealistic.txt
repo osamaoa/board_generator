@@ -1,0 +1,16 @@
+# Backend plus CUDA photorealistic generation and diffusion training dependencies.
+# Install this instead of requirements.txt when the photorealistic feature is needed.
+-r requirements.txt
+
+# Known-good photorealistic stack used during development (Mar 2026):
+# torch 2.10.0(+cu130), torchvision 0.25.0(+cu130),
+# accelerate 1.13.0, diffusers 0.37.0, transformers 5.3.0.
+torch==2.10.0
+torchvision==0.25.0
+accelerate==1.13.0
+diffusers==0.37.0
+transformers==5.3.0
+filelock==3.25.0
+safetensors==0.7.0
+Pillow==12.0.0
+wandb==0.25.0
