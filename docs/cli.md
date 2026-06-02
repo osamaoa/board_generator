@@ -23,11 +23,11 @@ Inspect the live command surface with:
 
 ## Batch Board Exports
 
-Start from an example config and override the run-specific output path:
+Start from your own JSON config and override the run-specific output path:
 
 ```bash
 ./board_cli.py boards generate \
-  --config-json docs/boards_generate_full_config.example.json \
+  --config-json path/to/boards_config.json \
   --output-dir /tmp/boards_out \
   --num-boards 50 \
   --outputs rings,fibers,middle,photorealistic
@@ -48,7 +48,7 @@ Every accepted board also writes metadata under `metadata/`. A run-level `manife
 
 ### Configuration
 
-The JSON examples place batch settings under `boards_generate` and model settings under `config`. CLI arguments override matching JSON values.
+JSON configs place batch settings under `boards_generate` and model settings under `config`. CLI arguments override matching JSON values.
 
 High-impact batch settings include:
 
@@ -68,7 +68,7 @@ Photorealistic generation can use ring and fiber maps or ring-only conditioning:
 
 ```bash
 ./board_cli.py boards generate \
-  --config-json docs/boards_generate_full_config.example.json \
+  --config-json path/to/boards_config.json \
   --output-dir /tmp/ring_only_faces \
   --outputs photorealistic \
   --photorealistic-use-rings-only true
@@ -88,7 +88,7 @@ When `use_gpu=true` and multiple CUDA devices are visible, board generation can 
 
 ```bash
 ./board_cli.py boards generate \
-  --config-json docs/boards_generate_full_config.example.json \
+  --config-json path/to/boards_config.json \
   --gpu-workers 2
 ```
 
@@ -100,7 +100,7 @@ Use the regeneration command when `rings_1..4` already exist and you only want `
 
 ```bash
 ./board_cli.py boards regenerate-photorealistic \
-  --config-json docs/boards_generate_full_config.example.json
+  --config-json path/to/boards_config.json
 ```
 
 Or point directly at an existing dataset:

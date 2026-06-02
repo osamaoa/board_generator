@@ -58,7 +58,7 @@ For a small batch-generation smoke test:
 
 ```bash
 ./board_cli.py boards generate \
-  --config-json docs/boards_generate_full_config.example.json \
+  --config-json path/to/boards_config.json \
   --output-dir /tmp/board_generator_smoke \
   --num-boards 2 \
   --outputs rings

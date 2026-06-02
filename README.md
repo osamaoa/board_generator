@@ -47,7 +47,6 @@ Open the UI at `http://localhost:5175`. The CLI entrypoint is `./board_cli.py`.
 ## Documentation
 
 - Paper PDF: `docs/paper.pdf` will be added for the release theory reference.
+- Getting started: `docs/getting_started.md`
 - UI manual: `docs/web_app.md`
 - CLI manual: `docs/cli.md`
-
-Setup notes and optional dependency notes are in `docs/getting_started.md`.

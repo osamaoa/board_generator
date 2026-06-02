@@ -100,7 +100,7 @@ class BoardConfig(BaseModel):
     include_knot_dev: bool = True
     dead_knots: bool = True
     knot_inside_limit: float = -20.0
-    # Soft clamping parameters (theory.md section 7.1)
+    # Soft clamping parameters used by the knot/growth distortion model.
     soft_clamp_alpha: float = 1.0
     soft_clamp_pmin: float = 2.0
     
