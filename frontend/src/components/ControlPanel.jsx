@@ -114,6 +114,7 @@ const ControlPanel = ({
     showFiberOutOfPlaneOverlay,
     fiberOutOfPlaneOverlayAvailable,
     onToggleFiberOutOfPlaneOverlay,
+    demoMode = false,
 }) => {
     const [activeSection, setActiveSection] = useState('geometry');
     const [selectedKnotIndex, setSelectedKnotIndex] = useState(0);
@@ -767,8 +768,13 @@ const ControlPanel = ({
                         </label>
 
                         <label className="toggle">
-                            <input type="checkbox" checked={config.use_gpu} onChange={(e) => handleChange('use_gpu', e.target.checked, 'bool')} />
-                            <span>Use GPU When Available</span>
+                            <input
+                                type="checkbox"
+                                checked={!demoMode && !!config.use_gpu}
+                                disabled={!!demoMode}
+                                onChange={(e) => handleChange('use_gpu', e.target.checked, 'bool')}
+                            />
+                            <span>{demoMode ? 'Use GPU When Available (Demo Disabled)' : 'Use GPU When Available'}</span>
                         </label>
                     </section>
                 )}

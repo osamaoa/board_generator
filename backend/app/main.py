@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import Response
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any, Tuple
 import numpy as np
@@ -11,6 +12,7 @@ import os
 import hashlib
 import base64
 import gc
+from pathlib import Path
 from io import BytesIO
 import zipfile
 import uuid
@@ -69,6 +71,20 @@ _SIM_CACHE_LIMIT = 1
 _SIM_MAX_BOARD_ATTEMPTS = 30
 _DEFAULT_FIBER_IRREGULARITY_STRENGTH = 0.35
 _DEFAULT_RING_IRREGULARITY_STRENGTH = 0.40
+_DEMO_MODE = str(os.environ.get("BOARD_GENERATOR_DEMO", "")).strip().lower() in {"1", "true", "yes", "on"}
+_PHOTOREALISTIC_DISABLED_REASON = "Photorealistic generation is disabled for this CPU demo."
+
+
+def _frontend_dist_dir() -> Path:
+    configured = str(os.environ.get("BOARD_GENERATOR_FRONTEND_DIST") or "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    # backend/app/main.py -> backend/app -> backend -> repository root
+    return Path(__file__).resolve().parents[2] / "frontend_dist"
+
+
+def _frontend_index_path() -> Path:
+    return _frontend_dist_dir() / "index.html"
 
 
 class _RetryablePlacementError(RuntimeError):
@@ -1515,25 +1531,43 @@ def _build_matlab_bundle_png_payload(
 
 @app.get("/")
 def read_root():
+    index_path = _frontend_index_path()
+    if index_path.is_file():
+        return FileResponse(index_path)
     return {"message": "Board Generator API"}
 
 
 @app.get("/capabilities")
 def get_capabilities():
+    if _DEMO_MODE:
+        photorealistic_capability = {
+            "available": False,
+            "reason": _PHOTOREALISTIC_DISABLED_REASON,
+            "device": "",
+            "cuda_available": False,
+            "recommended_ddim_steps": 50,
+            "loaded": False,
+        }
+    else:
+        photorealistic_capability = get_photorealistic_capability()
     return {
-        "photorealistic_export": get_photorealistic_capability(),
+        "photorealistic_export": photorealistic_capability,
     }
 
 
 @app.post("/photorealistic/preload")
 def preload_photorealistic():
     try:
+        if _DEMO_MODE:
+            raise HTTPException(status_code=503, detail=_PHOTOREALISTIC_DISABLED_REASON)
         preload_info = preload_photorealistic_model()
         return {
             "ok": True,
             "loaded": bool(preload_info.get("loaded")),
             "capability": get_photorealistic_capability(),
         }
+    except HTTPException:
+        raise
     except PhotorealisticUnavailableError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except PhotorealisticInferenceError as e:
@@ -1847,6 +1881,9 @@ def export_matlab_image_bundle(req: ExportMatlabImageBundleRequest):
 @app.post("/export/photorealistic-surfaces")
 def export_photorealistic_surfaces(req: ExportPhotorealisticRequest):
     try:
+        if _DEMO_MODE:
+            raise HTTPException(status_code=503, detail=_PHOTOREALISTIC_DISABLED_REASON)
+
         sim_id = str(req.simulation_id or "").strip()
         if not sim_id:
             raise HTTPException(status_code=400, detail="simulation_id is required.")
@@ -1984,6 +2021,9 @@ def export_photorealistic_surfaces(req: ExportPhotorealisticRequest):
 @app.post("/simulate")
 def simulate(config: BoardConfig):
     try:
+        if _DEMO_MODE:
+            config.use_gpu = False
+
         seeded_mode = bool(config.use_seed)
         base_seed = int(config.simulation_seed) if seeded_mode else 0
 
@@ -2643,6 +2683,25 @@ def simulate(config: BoardConfig):
         import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/{asset_path:path}", include_in_schema=False)
+def serve_frontend_asset(asset_path: str):
+    frontend_dir = _frontend_dist_dir()
+    index_path = frontend_dir / "index.html"
+    if not index_path.is_file():
+        raise HTTPException(status_code=404, detail="Frontend build not found.")
+
+    requested = (frontend_dir / str(asset_path or "")).resolve()
+    try:
+        requested.relative_to(frontend_dir.resolve())
+    except Exception:
+        raise HTTPException(status_code=404, detail="Asset not found.")
+
+    if requested.is_file():
+        return FileResponse(requested)
+    return FileResponse(index_path)
+
 
 if __name__ == "__main__":
     import uvicorn

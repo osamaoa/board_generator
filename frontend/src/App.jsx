@@ -4,7 +4,10 @@ import ControlPanel from './components/ControlPanel';
 import Viewer3D from './components/Viewer3D';
 import './App.css';
 
-const API_BASE_URL = 'http://localhost:8100';
+const isDemoMode = ['1', 'true', 'yes', 'on'].includes(
+  String(import.meta.env.VITE_BOARD_GENERATOR_DEMO || '').trim().toLowerCase()
+);
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8100' : '');
 const defaultPhotorealisticCapability = {
   available: false,
   reason: '',
@@ -63,7 +66,7 @@ export const defaultConfig = {
   mesh_size_z_mm: 2.0,
   use_seed: false,
   simulation_seed: 100,
-  use_gpu: true,
+  use_gpu: !isDemoMode,
   use_input_knots: false,
   input_knot_count: 1,
   input_knots: [{ ...defaultInputKnot }],
@@ -866,6 +869,8 @@ function App() {
             || !simulationData
             || !simulationData.simulation_id
             || !simulationData.fibers
+            || !photorealisticAvailable
+            || isDemoMode
           }
           exportPhotorealisticLoading={exportingPhotorealistic}
           downloadPhotorealisticZipDisabled={
@@ -878,11 +883,14 @@ function App() {
             loading
             || preloadingPhotorealistic
             || photorealisticLoaded
+            || !photorealisticAvailable
+            || isDemoMode
           }
           preloadPhotorealisticLoading={preloadingPhotorealistic}
           photorealisticAvailable={photorealisticAvailable}
           photorealisticLoaded={photorealisticLoaded}
           photorealisticReason={photorealisticReason}
+          demoMode={isDemoMode}
           showPhotorealisticOverlay={showPhotorealisticOverlay}
           photorealisticOverlayAvailable={!!photorealisticOverlays}
           onTogglePhotorealisticOverlay={(next) => setShowPhotorealisticOverlay(!!next)}
