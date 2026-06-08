@@ -1,12 +1,3 @@
----
-title: Board Generator Demo
-colorFrom: green
-colorTo: blue
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # Board Generator
 
 Board Generator creates synthetic wood boards from a 3D log model. It combines growth layers, knots, board placement, fiber orientations, and photorealistic face generation in one simulation package.
