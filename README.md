@@ -55,7 +55,9 @@ Open the UI at `http://localhost:5175`. The CLI entrypoint is `./board_cli.py`.
 
 ## Hugging Face Demo
 
-This repository includes a Docker Space configuration for a CPU-only web demo. The demo serves the React UI from FastAPI on port `7860`, includes the knot sequence model, disables GPU simulation, and disables photorealistic generation.
+Public demo: https://osamaabdeljaber-board-generator.hf.space
+
+This demo is CPU-only and does not include photorealistic face generation. It serves the React UI from FastAPI on port `7860`, includes the knot sequence model, and disables GPU simulation.
 
 ## Documentation
 
