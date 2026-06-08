@@ -7,6 +7,12 @@ The package provides:
 - a web UI for interactive board and log generation, 3D inspection, MATLAB export, image-map export, and photorealistic face export
 - a CLI for batch board exports, knot-sequence model data preparation/training/evaluation, and photorealistic diffusion training
 
+## Hugging Face Demo
+
+Public demo: https://osamaabdeljaber-board-generator.hf.space
+
+This demo is CPU-only and does not include photorealistic face generation. It serves the React UI from FastAPI on port `7860`, includes the knot sequence model, and disables GPU simulation.
+
 ## Start
 
 Install the Python dependencies without the photorealistic feature:
@@ -43,12 +49,6 @@ npm run dev -- --host 0.0.0.0 --port 5175
 ```
 
 Open the UI at `http://localhost:5175`. The CLI entrypoint is `./board_cli.py`.
-
-## Hugging Face Demo
-
-Public demo: https://osamaabdeljaber-board-generator.hf.space
-
-This demo is CPU-only and does not include photorealistic face generation. It serves the React UI from FastAPI on port `7860`, includes the knot sequence model, and disables GPU simulation.
 
 ## Documentation
 
