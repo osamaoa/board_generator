@@ -11,7 +11,7 @@ The package provides:
 
 Public demo: https://osamaabdeljaber-board-generator.hf.space
 
-This demo is CPU-only and does not include photorealistic face generation. It serves the React UI from FastAPI on port `7860`, includes the knot sequence model, and disables GPU simulation.
+**Note: This demo is CPU-only and does not include photorealistic face generation.**
 
 ## Start
 
