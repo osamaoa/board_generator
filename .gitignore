@@ -12,6 +12,7 @@ __pycache__/
 node_modules/
 dist/
 photorealistic_model_checkpoint/
+photorealistic_checkpoint.zip
 knot_model_checkpoint/
 SDXL_model/
 how_to_run_inference.txt

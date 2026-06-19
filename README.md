@@ -29,6 +29,40 @@ Use the photorealistic requirement set instead when CUDA photorealistic generati
 pip install -r backend/requirements-photorealistic.txt
 ```
 
+### Photorealistic Model Assets
+
+Photorealistic generation needs two local model folders that are not stored in Git:
+
+- `SDXL_model/`: the original SDXL base model from Hugging Face, `stabilityai/stable-diffusion-xl-base-1.0`
+- `photorealistic_model_checkpoint/`: the Board Generator fine-tuned checkpoint
+
+Download the SDXL base model files required by this project:
+
+```bash
+pip install -U huggingface_hub
+hf auth login
+hf download stabilityai/stable-diffusion-xl-base-1.0 \
+  model_index.json \
+  scheduler/scheduler_config.json \
+  unet/config.json \
+  unet/diffusion_pytorch_model.safetensors \
+  vae/config.json \
+  vae/diffusion_pytorch_model.safetensors \
+  --local-dir SDXL_model
+```
+
+`hf auth login` is only needed when your Hugging Face session has not already accepted the SDXL license or when the Hub asks for authentication. The command above downloads the app-required files from the original SDXL repository; a full repository mirror is much larger and is not needed for Board Generator.
+
+Download the Board Generator checkpoint after it has been uploaded:
+
+```bash
+curl -L -o photorealistic_checkpoint.zip \
+  https://structuralvibration.com/photorealistic_checkpoint.zip
+unzip -o photorealistic_checkpoint.zip
+```
+
+The zip extracts `photorealistic_model_checkpoint/config.json`, `photorealistic_model_checkpoint/unet.safetensors`, and `photorealistic_model_checkpoint/null_embed.safetensors`. To keep the folders elsewhere, set `PHOTOREALISTIC_SDXL_MODEL_DIR` and `PHOTOREALISTIC_CHECKPOINT_DIR` before starting the backend.
+
 Install the frontend dependencies:
 
 ```bash
