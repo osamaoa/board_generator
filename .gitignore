@@ -26,3 +26,9 @@ start_services.sh
 runs/
 .old_knot_generator/
 .tmp/
+.boards_with_pith/generated*/
+.boards_with_pith/*.html
+.boards_with_pith/*.log
+.boards_with_pith/*.pid
+.hf_upload/
+*:Zone.Identifier

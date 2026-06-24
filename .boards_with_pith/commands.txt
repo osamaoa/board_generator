@@ -1,0 +1,48 @@
+./board_cli.py boards generate \
+    --config-json .boards_with_pith/config.json \
+    --num-boards 5 \
+    --output-dir .boards_with_pith/generated \
+    --gpu-workers 1
+
+python tools/build_pith_detection_report.py \
+    --data-root .boards_with_pith/generated \
+    --output-html .boards_with_pith/pith_report.html \
+    --image-prefix photorealistic \
+    --limit 5
+
+./board_cli.py boards generate \
+    --config-json .boards_with_pith/config.json \
+    --num-boards 10 \
+    --output-dir .boards_with_pith/generated_large_crook \
+    --gpu-workers 1
+
+python tools/build_pith_detection_report.py \
+    --data-root .boards_with_pith/generated_large_crook \
+    --output-html .boards_with_pith/pith_report_large_crook.html \
+    --image-prefix photorealistic \
+    --limit 10
+
+./board_cli.py boards generate \
+    --config-json .boards_with_pith/config.json \
+    --num-boards 10 \
+    --output-dir .boards_with_pith/generated_large_crook_smoother \
+    --gpu-workers 1
+
+python tools/build_pith_detection_report.py \
+    --data-root .boards_with_pith/generated_large_crook_smoother \
+    --output-html .boards_with_pith/pith_report_large_crook_smoother.html \
+    --image-prefix photorealistic \
+    --limit 10
+
+tmux new-session -d -s pith_training_5000 'cd /home/osabaa/board_generator && env PYTHONUNBUFFERED=1 ./board_cli.py boards generate \
+    --config-json .boards_with_pith/config.json \
+    --num-boards 5000 \
+    --output-dir .boards_with_pith/generated_training_5000 \
+    --gpu-workers 1 \
+    > .boards_with_pith/generated_training_5000.log 2>&1'
+
+python tools/build_pith_detection_report.py \
+    --data-root .boards_with_pith/generated_training_5000 \
+    --output-html .boards_with_pith/pith_report_training_5000.html \
+    --image-prefix photorealistic \
+    --limit 50

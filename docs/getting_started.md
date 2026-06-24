@@ -73,21 +73,23 @@ SDXL_model/
 
 ### Fine-Tuned Photorealistic Checkpoint
 
-After the checkpoint has been uploaded, download it from:
+Download the checkpoint from the public Hugging Face model repository:
 
 ```text
-https://structuralvibration.com/photorealistic_checkpoint.zip
+https://huggingface.co/OsamaAbdeljaber/photorealistic-wood-board-sdxl
 ```
 
 From the repository root:
 
 ```bash
-curl -L -o photorealistic_checkpoint.zip \
-  https://structuralvibration.com/photorealistic_checkpoint.zip
-unzip -o photorealistic_checkpoint.zip
+hf download OsamaAbdeljaber/photorealistic-wood-board-sdxl \
+  config.json \
+  unet.safetensors \
+  null_embed.safetensors \
+  --local-dir photorealistic_model_checkpoint
 ```
 
-The archive extracts the runtime checkpoint folder:
+This downloads the runtime checkpoint folder:
 
 ```text
 photorealistic_model_checkpoint/
@@ -96,7 +98,7 @@ photorealistic_model_checkpoint/
   null_embed.safetensors
 ```
 
-Do not put the SDXL base model files into `photorealistic_model_checkpoint/`. The base model and fine-tuned checkpoint are loaded separately.
+The checkpoint is derived from SDXL and the Hugging Face repository includes the OpenRAIL++ license and attribution. Do not put the SDXL base model files into `photorealistic_model_checkpoint/`. The base model and fine-tuned checkpoint are loaded separately.
 
 ## Run The UI
 

@@ -31,6 +31,7 @@ from app.main import (
     _build_fiber_surface_pngs,
     _build_matlab_mid_ring_png,
     _build_matlab_ring_pngs,
+    _evaluate_exported_crook_centerline,
     _evaluate_outer_radius,
     _flip_png_vertical_bytes,
     _render_surface_png_matlab,
@@ -647,6 +648,158 @@ class _PlacementPolicy:
 
 class _RetryablePlacementError(RuntimeError):
     """Per-attempt placement failure that should count as rejection, not crash generation."""
+
+
+def _safe_norm(value: np.ndarray, lo: float, hi: float) -> np.ndarray:
+    span = float(hi) - float(lo)
+    if not np.isfinite(span) or abs(span) < 1e-12:
+        return np.zeros_like(value, dtype=np.float64)
+    return (value.astype(np.float64, copy=False) - float(lo)) / span
+
+
+def _build_pith_label_payload(
+    *,
+    filename: str,
+    board_index: int,
+    board_dims: Dict[str, float],
+    geometry_randomization: Dict[str, Any],
+    image_size: int,
+) -> Dict[str, Any]:
+    z_min = float(board_dims["z_min"])
+    z_max = float(board_dims["z_max"])
+    x_min = float(board_dims["x_min"])
+    x_max = float(board_dims["x_max"])
+    y_min = float(board_dims["y_min"])
+    y_max = float(board_dims["y_max"])
+    sample_count = max(2, int(image_size))
+
+    rows = np.arange(sample_count, dtype=np.int32)
+    z_values = np.linspace(z_min, z_max, sample_count, dtype=np.float64)
+    xy_values = np.asarray(
+        [
+            _evaluate_exported_crook_centerline(float(z_mm), geometry_randomization)
+            for z_mm in z_values.tolist()
+        ],
+        dtype=np.float64,
+    )
+    if xy_values.ndim != 2 or xy_values.shape[1] != 2:
+        xy_values = np.zeros((sample_count, 2), dtype=np.float64)
+
+    x_values = xy_values[:, 0]
+    y_values = xy_values[:, 1]
+    x_norm = _safe_norm(x_values, x_min, x_max)
+    y_norm = _safe_norm(y_values, y_min, y_max)
+    z_norm = _safe_norm(z_values, z_min, z_max)
+    inside_xy = (
+        (x_values >= min(x_min, x_max))
+        & (x_values <= max(x_min, x_max))
+        & (y_values >= min(y_min, y_max))
+        & (y_values <= max(y_min, y_max))
+    )
+
+    def _face_payload(
+        *,
+        folder: str,
+        face: str,
+        horizontal_axis: str,
+        fixed_axis: str,
+        fixed_value: float,
+        flip_x: bool,
+    ) -> Dict[str, Any]:
+        if horizontal_axis == "x":
+            u = x_values
+            u_min = x_min
+            u_max = x_max
+        else:
+            u = y_values
+            u_min = y_min
+            u_max = y_max
+        axis_norm = _safe_norm(u, u_min, u_max)
+        image_x_norm = 1.0 - axis_norm if bool(flip_x) else axis_norm
+        perpendicular = (
+            y_values - float(fixed_value)
+            if fixed_axis == "y"
+            else x_values - float(fixed_value)
+        )
+        return {
+            "folder": folder,
+            "face": face,
+            "horizontal_axis": horizontal_axis,
+            "fixed_axis": fixed_axis,
+            "fixed_value_mm": float(fixed_value),
+            "flip_x": bool(flip_x),
+            "axis_norm": [float(v) for v in axis_norm.tolist()],
+            "image_x_norm": [float(v) for v in image_x_norm.tolist()],
+            "projected_on_face": [bool(0.0 <= float(v) <= 1.0) for v in axis_norm.tolist()],
+            "perpendicular_distance_mm": [float(v) for v in perpendicular.tolist()],
+        }
+
+    return {
+        "filename": str(filename),
+        "stem": Path(str(filename)).stem,
+        "board_index": int(board_index),
+        "image_size": int(image_size),
+        "coordinate_system": (
+            "Millimeters in board/world coordinates: X=board width, "
+            "Y=board thickness, Z=board length. Rows match generated side-image rows "
+            "from top z_min to bottom z_max."
+        ),
+        "board_extents": {
+            "x_min": x_min,
+            "x_max": x_max,
+            "y_min": y_min,
+            "y_max": y_max,
+            "z_min": z_min,
+            "z_max": z_max,
+            "width": float(board_dims["width"]),
+            "thickness": float(board_dims["thickness"]),
+            "length": float(board_dims["length"]),
+        },
+        "pith_centerline": {
+            "row": [int(v) for v in rows.tolist()],
+            "z_mm": [float(v) for v in z_values.tolist()],
+            "x_mm": [float(v) for v in x_values.tolist()],
+            "y_mm": [float(v) for v in y_values.tolist()],
+            "z_norm": [float(v) for v in z_norm.tolist()],
+            "x_norm": [float(v) for v in x_norm.tolist()],
+            "y_norm": [float(v) for v in y_norm.tolist()],
+            "inside_board_xy": [bool(v) for v in inside_xy.tolist()],
+        },
+        "faces": {
+            "surface_1": _face_payload(
+                folder="photorealistic_1",
+                face="y_max",
+                horizontal_axis="x",
+                fixed_axis="y",
+                fixed_value=y_max,
+                flip_x=True,
+            ),
+            "surface_2": _face_payload(
+                folder="photorealistic_2",
+                face="y_min",
+                horizontal_axis="x",
+                fixed_axis="y",
+                fixed_value=y_min,
+                flip_x=False,
+            ),
+            "surface_3": _face_payload(
+                folder="photorealistic_3",
+                face="x_max",
+                horizontal_axis="y",
+                fixed_axis="x",
+                fixed_value=x_max,
+                flip_x=False,
+            ),
+            "surface_4": _face_payload(
+                folder="photorealistic_4",
+                face="x_min",
+                horizontal_axis="y",
+                fixed_axis="x",
+                fixed_value=x_min,
+                flip_x=True,
+            ),
+        },
+    }
 
 
 def _detect_cuda_device_count() -> int:
@@ -1859,8 +2012,28 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
             },
             "knot_params": knot_params_export,
         }
+        pith_label_payload = _build_pith_label_payload(
+            filename=filename,
+            board_index=accepted,
+            board_dims=board_dims,
+            geometry_randomization=(
+                k.geometry_randomization_info
+                if isinstance(k.geometry_randomization_info, dict) else {}
+            ),
+            image_size=image_size,
+        )
+        board_meta["pith_labels"] = {
+            "path": f"pith_labels/{file_stem}.json",
+            "sample_count": int(len(pith_label_payload["pith_centerline"]["row"])),
+        }
         metadata_path.write_text(
             json.dumps(board_meta, indent=2),
+            encoding="utf-8",
+        )
+        pith_label_dir = root / "pith_labels"
+        pith_label_dir.mkdir(parents=True, exist_ok=True)
+        (pith_label_dir / f"{file_stem}.json").write_text(
+            json.dumps(pith_label_payload, indent=2),
             encoding="utf-8",
         )
         accepted_filenames.append(filename)
@@ -2043,6 +2216,7 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         },
         "generated_filenames": accepted_filenames,
         "metadata_folder": "metadata",
+        "pith_labels_folder": "pith_labels",
         "base_config": _model_dump(base_cfg),
     }
     manifest_path_raw = str(getattr(args, "_multi_gpu_manifest_path", "") or "").strip()
