@@ -51,17 +51,19 @@ hf download stabilityai/stable-diffusion-xl-base-1.0 \
   --local-dir SDXL_model
 ```
 
-`hf auth login` is only needed when your Hugging Face session has not already accepted the SDXL license or when the Hub asks for authentication. The command above downloads the app-required files from the original SDXL repository; a full repository mirror is much larger and is not needed for Board Generator.
+`hf auth login` is only needed when your Hugging Face session has not already accepted the SDXL license or when the Hub asks for authentication. The command above downloads the app-required files from the original SDXL repository; downloading the entire repository is much larger and is not needed for Board Generator.
 
-Download the Board Generator checkpoint after it has been uploaded:
+Download the Board Generator checkpoint from the public Hugging Face model repository:
 
 ```bash
-curl -L -o photorealistic_checkpoint.zip \
-  https://structuralvibration.com/photorealistic_checkpoint.zip
-unzip -o photorealistic_checkpoint.zip
+hf download OsamaAbdeljaber/photorealistic-wood-board-sdxl \
+  config.json \
+  unet.safetensors \
+  null_embed.safetensors \
+  --local-dir photorealistic_model_checkpoint
 ```
 
-The zip extracts `photorealistic_model_checkpoint/config.json`, `photorealistic_model_checkpoint/unet.safetensors`, and `photorealistic_model_checkpoint/null_embed.safetensors`. To keep the folders elsewhere, set `PHOTOREALISTIC_SDXL_MODEL_DIR` and `PHOTOREALISTIC_CHECKPOINT_DIR` before starting the backend.
+The checkpoint repository is https://huggingface.co/OsamaAbdeljaber/photorealistic-wood-board-sdxl. It contains the Board Generator fine-tuned checkpoint only: `photorealistic_model_checkpoint/config.json`, `photorealistic_model_checkpoint/unet.safetensors`, and `photorealistic_model_checkpoint/null_embed.safetensors`. The checkpoint is derived from SDXL and the repository includes the OpenRAIL++ license and attribution. Download the SDXL base files separately from the original Stability AI repository above. To keep the folders elsewhere, set `PHOTOREALISTIC_SDXL_MODEL_DIR` and `PHOTOREALISTIC_CHECKPOINT_DIR` before starting the backend.
 
 Install the frontend dependencies:
 
