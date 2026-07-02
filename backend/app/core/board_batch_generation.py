@@ -1286,12 +1286,12 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         1.0,
         max(
             0.0,
-            float(resolve("ring_color_knot_darkness", getattr(args, "ring_color_knot_darkness", None), 0.40)),
+            float(resolve("ring_color_knot_darkness", getattr(args, "ring_color_knot_darkness", None), 0.30)),
         ),
     )
     ring_color_knot_spread_mm = max(
         1e-6,
-        float(resolve("ring_color_knot_spread_mm", getattr(args, "ring_color_knot_spread_mm", None), 14.0)),
+        float(resolve("ring_color_knot_spread_mm", getattr(args, "ring_color_knot_spread_mm", None), 40.0)),
     )
     ring_color_knot_stain_color = str(
         resolve("ring_color_knot_stain_color", getattr(args, "ring_color_knot_stain_color", None), "#8f705b")
@@ -1301,7 +1301,7 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         1.0,
         max(
             0.0,
-            float(resolve("ring_color_knot_opacity", getattr(args, "ring_color_knot_opacity", None), 0.58)),
+            float(resolve("ring_color_knot_opacity", getattr(args, "ring_color_knot_opacity", None), 1.0)),
         ),
     )
 

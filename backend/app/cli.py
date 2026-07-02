@@ -586,13 +586,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--ring-color-knot-darkness",
         type=float,
         default=None,
-        help="Strength of knot stain darkening for ring_color output, 0 disables it and 1 is strongest (default: 0.40).",
+        help="Strength of knot stain darkening for ring_color output, 0 disables it and 1 is strongest (default: 0.30).",
     )
     generate.add_argument(
         "--ring-color-knot-spread-mm",
         type=float,
         default=None,
-        help="Gaussian spread in millimeters for knot staining outside the knot-inside limit (default: 14.0).",
+        help="Gaussian spread in millimeters for knot staining outside the knot-inside limit (default: 40.0).",
     )
     generate.add_argument(
         "--ring-color-knot-stain-color",
@@ -604,7 +604,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--ring-color-knot-opacity",
         type=float,
         default=None,
-        help="Blend opacity for knot stain in ring_color output, from 0 to 1 (default: 0.58).",
+        help="Blend opacity for knot stain in ring_color output, from 0 to 1 (default: 1.0).",
     )
     generate.add_argument("--image-size", type=int, default=None, help="PNG resolution per side (default: 512).")
     generate.add_argument("--imid-start", type=int, default=None, help="Start index for output image filenames (default: 1).")
