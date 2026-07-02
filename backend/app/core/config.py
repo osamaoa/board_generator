@@ -143,12 +143,12 @@ class BoardConfig(BaseModel):
     display_contours: bool = True
     display_surface_mesh: bool = False
     display_ring_color: bool = False
-    ring_color_stops: str = ""
+    ring_color_stops: str = "-0.6:#d8c8ae;-0.08:#d3bea0;0:#cbae8c;0.08:#d3bea0;0.6:#d8c8ae"
     ring_color_clip: float = 1.0
-    ring_color_knot_darkness: float = 0.50
-    ring_color_knot_spread_mm: float = 8.0
-    ring_color_knot_stain_color: str = "#3b2a1a"
-    ring_color_knot_opacity: float = 1.0
+    ring_color_knot_darkness: float = 0.08
+    ring_color_knot_spread_mm: float = 14.0
+    ring_color_knot_stain_color: str = "#8f705b"
+    ring_color_knot_opacity: float = 0.34
 
     # Veneer-mode rotary peeling controls.
     veneer_outer_radius_mm: float = 70.0

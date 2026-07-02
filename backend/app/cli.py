@@ -573,7 +573,7 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Semicolon-separated normalized contour color stops for ring_color output, "
-            "for example '-0.5:#f0bc8f;0:#9c6331;0.5:#f0bc8f'."
+            "for example '-0.6:#d8c8ae;-0.08:#d3bea0;0:#cbae8c;0.08:#d3bea0;0.6:#d8c8ae'."
         ),
     )
     generate.add_argument(
@@ -586,25 +586,25 @@ def _build_parser() -> argparse.ArgumentParser:
         "--ring-color-knot-darkness",
         type=float,
         default=None,
-        help="Strength of knot stain darkening for ring_color output, 0 disables it and 1 is strongest (default: 0.50).",
+        help="Strength of knot stain darkening for ring_color output, 0 disables it and 1 is strongest (default: 0.08).",
     )
     generate.add_argument(
         "--ring-color-knot-spread-mm",
         type=float,
         default=None,
-        help="Gaussian spread in millimeters for knot staining outside the knot-inside limit (default: 8.0).",
+        help="Gaussian spread in millimeters for knot staining outside the knot-inside limit (default: 14.0).",
     )
     generate.add_argument(
         "--ring-color-knot-stain-color",
         type=str,
         default=None,
-        help="Hex stain color for knots in ring_color output (default: #3b2a1a).",
+        help="Hex stain color for knots in ring_color output (default: #8f705b).",
     )
     generate.add_argument(
         "--ring-color-knot-opacity",
         type=float,
         default=None,
-        help="Blend opacity for knot stain in ring_color output, from 0 to 1 (default: 1.0).",
+        help="Blend opacity for knot stain in ring_color output, from 0 to 1 (default: 0.34).",
     )
     generate.add_argument("--image-size", type=int, default=None, help="PNG resolution per side (default: 512).")
     generate.add_argument("--imid-start", type=int, default=None, help="Start index for output image filenames (default: 1).")

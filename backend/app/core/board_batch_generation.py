@@ -1273,7 +1273,11 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         maximum=2.0,
     )
     show_inside = _as_bool(resolve("show_rings_inside_knots", args.show_rings_inside_knots, False))
-    ring_color_stops = resolve("ring_color_stops", getattr(args, "ring_color_stops", None), None)
+    ring_color_stops = resolve(
+        "ring_color_stops",
+        getattr(args, "ring_color_stops", None),
+        "-0.6:#d8c8ae;-0.08:#d3bea0;0:#cbae8c;0.08:#d3bea0;0.6:#d8c8ae",
+    )
     ring_color_clip = max(
         1e-6,
         float(resolve("ring_color_clip", getattr(args, "ring_color_clip", None), 1.0)),
@@ -1282,22 +1286,22 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         1.0,
         max(
             0.0,
-            float(resolve("ring_color_knot_darkness", getattr(args, "ring_color_knot_darkness", None), 0.50)),
+            float(resolve("ring_color_knot_darkness", getattr(args, "ring_color_knot_darkness", None), 0.08)),
         ),
     )
     ring_color_knot_spread_mm = max(
         1e-6,
-        float(resolve("ring_color_knot_spread_mm", getattr(args, "ring_color_knot_spread_mm", None), 8.0)),
+        float(resolve("ring_color_knot_spread_mm", getattr(args, "ring_color_knot_spread_mm", None), 14.0)),
     )
     ring_color_knot_stain_color = str(
-        resolve("ring_color_knot_stain_color", getattr(args, "ring_color_knot_stain_color", None), "#3b2a1a")
-        or "#3b2a1a"
+        resolve("ring_color_knot_stain_color", getattr(args, "ring_color_knot_stain_color", None), "#8f705b")
+        or "#8f705b"
     )
     ring_color_knot_opacity = min(
         1.0,
         max(
             0.0,
-            float(resolve("ring_color_knot_opacity", getattr(args, "ring_color_knot_opacity", None), 1.0)),
+            float(resolve("ring_color_knot_opacity", getattr(args, "ring_color_knot_opacity", None), 0.34)),
         ),
     )
 

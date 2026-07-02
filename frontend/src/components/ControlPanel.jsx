@@ -79,12 +79,14 @@ const normalizePositiveIntArray = (raw) => {
 };
 const formatPositiveIntArray = (raw) => normalizePositiveIntArray(raw).join(', ');
 const defaultRingColorStops = [
-    { level: -0.5, color: '#f0bc8f' },
-    { level: 0.0, color: '#9c6331' },
-    { level: 0.5, color: '#f0bc8f' },
+    { level: -0.6, color: '#d8c8ae' },
+    { level: -0.08, color: '#d3bea0' },
+    { level: 0.0, color: '#cbae8c' },
+    { level: 0.08, color: '#d3bea0' },
+    { level: 0.6, color: '#d8c8ae' },
 ];
 
-const normalizeHexColor = (raw, fallback = '#f0bc8f') => {
+const normalizeHexColor = (raw, fallback = '#d8c8ae') => {
     const text = String(raw || '').trim();
     if (/^#[0-9a-f]{6}$/i.test(text)) return text.toLowerCase();
     if (/^#[0-9a-f]{3}$/i.test(text)) {
@@ -296,16 +298,16 @@ const ControlPanel = ({
             nextConfig.random_taper_max = Math.max(0, toNumber(nextConfig.random_taper_max, defaultRandomTaperMax));
         }
         if (key === 'ring_color_knot_darkness') {
-            nextConfig.ring_color_knot_darkness = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_darkness, 0.50)));
+            nextConfig.ring_color_knot_darkness = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_darkness, 0.08)));
         }
         if (key === 'ring_color_knot_spread_mm') {
-            nextConfig.ring_color_knot_spread_mm = Math.max(1e-6, toNumber(nextConfig.ring_color_knot_spread_mm, 8.0));
+            nextConfig.ring_color_knot_spread_mm = Math.max(1e-6, toNumber(nextConfig.ring_color_knot_spread_mm, 14.0));
         }
         if (key === 'ring_color_knot_stain_color') {
-            nextConfig.ring_color_knot_stain_color = normalizeHexColor(nextConfig.ring_color_knot_stain_color, '#3b2a1a');
+            nextConfig.ring_color_knot_stain_color = normalizeHexColor(nextConfig.ring_color_knot_stain_color, '#8f705b');
         }
         if (key === 'ring_color_knot_opacity') {
-            nextConfig.ring_color_knot_opacity = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_opacity, 1.0)));
+            nextConfig.ring_color_knot_opacity = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_opacity, 0.34)));
         }
         if (key === 'knot_generator_min_rd_minus_rl_mm') {
             nextConfig.knot_generator_min_rd_minus_rl_mm = Math.max(0, toNumber(nextConfig.knot_generator_min_rd_minus_rl_mm, 30.0));
@@ -1390,29 +1392,29 @@ const ControlPanel = ({
                                             <span>Stain Color</span>
                                             <input
                                                 type="color"
-                                                value={normalizeHexColor(config.ring_color_knot_stain_color, '#3b2a1a')}
+                                                value={normalizeHexColor(config.ring_color_knot_stain_color, '#8f705b')}
                                                 onChange={(e) => handleChange('ring_color_knot_stain_color', e.target.value)}
                                             />
                                         </label>
                                         <label className="field">
                                             <span>Darkness</span>
                                             <div className="range-row">
-                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_darkness, 0.50)} onChange={(e) => handleChange('ring_color_knot_darkness', e.target.value, 'number')} />
-                                                <strong>{toNumber(config.ring_color_knot_darkness, 0.50).toFixed(2)}</strong>
+                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_darkness, 0.08)} onChange={(e) => handleChange('ring_color_knot_darkness', e.target.value, 'number')} />
+                                                <strong>{toNumber(config.ring_color_knot_darkness, 0.08).toFixed(2)}</strong>
                                             </div>
                                         </label>
                                         <label className="field">
                                             <span>Opacity</span>
                                             <div className="range-row">
-                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_opacity, 1.0)} onChange={(e) => handleChange('ring_color_knot_opacity', e.target.value, 'number')} />
-                                                <strong>{toNumber(config.ring_color_knot_opacity, 1.0).toFixed(2)}</strong>
+                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_opacity, 0.34)} onChange={(e) => handleChange('ring_color_knot_opacity', e.target.value, 'number')} />
+                                                <strong>{toNumber(config.ring_color_knot_opacity, 0.34).toFixed(2)}</strong>
                                             </div>
                                         </label>
                                         <label className="field">
                                             <span>Spread</span>
                                             <div className="range-row">
-                                                <input type="range" min={0.5} max={40} step={0.5} value={toNumber(config.ring_color_knot_spread_mm, 8.0)} onChange={(e) => handleChange('ring_color_knot_spread_mm', e.target.value, 'number')} />
-                                                <strong>{toNumber(config.ring_color_knot_spread_mm, 8.0).toFixed(1)}</strong>
+                                                <input type="range" min={0.5} max={40} step={0.5} value={toNumber(config.ring_color_knot_spread_mm, 14.0)} onChange={(e) => handleChange('ring_color_knot_spread_mm', e.target.value, 'number')} />
+                                                <strong>{toNumber(config.ring_color_knot_spread_mm, 14.0).toFixed(1)}</strong>
                                             </div>
                                         </label>
                                     </div>

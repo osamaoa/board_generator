@@ -76,10 +76,17 @@ _DEFAULT_RING_IRREGULARITY_STRENGTH = 0.40
 _DEMO_MODE = str(os.environ.get("BOARD_GENERATOR_DEMO", "")).strip().lower() in {"1", "true", "yes", "on"}
 _PHOTOREALISTIC_DISABLED_REASON = "Photorealistic generation is disabled for this CPU demo."
 _DEFAULT_RING_COLOR_STOPS = [
-    (-0.50, "#f0bc8f"),
-    (0.00, "#9c6331"),
-    (0.50, "#f0bc8f"),
+    (-0.60, "#d8c8ae"),
+    (-0.08, "#d3bea0"),
+    (0.00, "#cbae8c"),
+    (0.08, "#d3bea0"),
+    (0.60, "#d8c8ae"),
 ]
+_DEFAULT_RING_COLOR_STOPS_TEXT = "-0.6:#d8c8ae;-0.08:#d3bea0;0:#cbae8c;0.08:#d3bea0;0.6:#d8c8ae"
+_DEFAULT_KNOT_STAIN_DARKNESS = 0.08
+_DEFAULT_KNOT_STAIN_SPREAD_MM = 14.0
+_DEFAULT_KNOT_STAIN_COLOR = "#8f705b"
+_DEFAULT_KNOT_STAIN_OPACITY = 0.34
 
 
 def _frontend_dist_dir() -> Path:
@@ -516,9 +523,9 @@ def _apply_knot_stain_to_rgb(
     knot_field_image: Optional[np.ndarray],
     *,
     strength: float = 0.0,
-    spread_mm: float = 8.0,
-    stain_color: Any = "#3b2a1a",
-    opacity: float = 1.0,
+    spread_mm: float = _DEFAULT_KNOT_STAIN_SPREAD_MM,
+    stain_color: Any = _DEFAULT_KNOT_STAIN_COLOR,
+    opacity: float = _DEFAULT_KNOT_STAIN_OPACITY,
     knot_inside_limit: float = -20.0,
 ) -> np.ndarray:
     s = float(strength)
@@ -575,9 +582,9 @@ def _render_color_matrix_png(
     knot_field_uv: Any = None,
     knot_inside_limit: float = -20.0,
     knot_darkness: float = 0.0,
-    knot_darkness_spread_mm: float = 8.0,
-    knot_stain_color: Any = "#3b2a1a",
-    knot_opacity: float = 1.0,
+    knot_darkness_spread_mm: float = _DEFAULT_KNOT_STAIN_SPREAD_MM,
+    knot_stain_color: Any = _DEFAULT_KNOT_STAIN_COLOR,
+    knot_opacity: float = _DEFAULT_KNOT_STAIN_OPACITY,
 ) -> bytes:
     matrix = np.asarray(matrix_uv, dtype=np.float32)
     if matrix.ndim != 2 or matrix.size == 0:
@@ -623,9 +630,9 @@ def _build_growth_color_surface_pngs(
     knot_field: Any = None,
     knot_inside_limit: float = -20.0,
     knot_darkness: float = 0.0,
-    knot_darkness_spread_mm: float = 8.0,
-    knot_stain_color: Any = "#3b2a1a",
-    knot_opacity: float = 1.0,
+    knot_darkness_spread_mm: float = _DEFAULT_KNOT_STAIN_SPREAD_MM,
+    knot_stain_color: Any = _DEFAULT_KNOT_STAIN_COLOR,
+    knot_opacity: float = _DEFAULT_KNOT_STAIN_OPACITY,
 ) -> Dict[str, bytes]:
     normalized = _nearest_ring_normalized_field(growth_layer_fields, clip=float(clip))
     if normalized.ndim != 3 or normalized.size == 0:
@@ -698,9 +705,9 @@ def _build_growth_color_viewer_overlay_pngs(
     knot_field: Any = None,
     knot_inside_limit: float = -20.0,
     knot_darkness: float = 0.0,
-    knot_darkness_spread_mm: float = 8.0,
-    knot_stain_color: Any = "#3b2a1a",
-    knot_opacity: float = 1.0,
+    knot_darkness_spread_mm: float = _DEFAULT_KNOT_STAIN_SPREAD_MM,
+    knot_stain_color: Any = _DEFAULT_KNOT_STAIN_COLOR,
+    knot_opacity: float = _DEFAULT_KNOT_STAIN_OPACITY,
 ) -> Dict[str, bytes]:
     normalized = _nearest_ring_normalized_field(growth_layer_fields, clip=float(clip))
     if normalized.ndim != 3 or normalized.size == 0:
@@ -759,9 +766,9 @@ def _build_growth_color_log_cap_overlay_pngs(
     knot_field: Any = None,
     knot_inside_limit: float = -20.0,
     knot_darkness: float = 0.0,
-    knot_darkness_spread_mm: float = 8.0,
-    knot_stain_color: Any = "#3b2a1a",
-    knot_opacity: float = 1.0,
+    knot_darkness_spread_mm: float = _DEFAULT_KNOT_STAIN_SPREAD_MM,
+    knot_stain_color: Any = _DEFAULT_KNOT_STAIN_COLOR,
+    knot_opacity: float = _DEFAULT_KNOT_STAIN_OPACITY,
 ) -> Dict[str, bytes]:
     normalized = _nearest_ring_normalized_field(growth_layer_fields, clip=float(clip))
     if normalized.ndim != 3 or normalized.size == 0:
@@ -842,9 +849,9 @@ def _build_board_ring_color_overlay_payload(
     color_stops: Any = None,
     clip: float = 1.0,
     knot_darkness: float = 0.0,
-    knot_darkness_spread_mm: float = 8.0,
-    knot_stain_color: Any = "#3b2a1a",
-    knot_opacity: float = 1.0,
+    knot_darkness_spread_mm: float = _DEFAULT_KNOT_STAIN_SPREAD_MM,
+    knot_stain_color: Any = _DEFAULT_KNOT_STAIN_COLOR,
+    knot_opacity: float = _DEFAULT_KNOT_STAIN_OPACITY,
     size: int = 512,
 ) -> Optional[Dict[str, Dict[str, str]]]:
     knot_mask = None
@@ -885,9 +892,9 @@ def _build_log_ring_color_overlay_payload(
     color_stops: Any = None,
     clip: float = 1.0,
     knot_darkness: float = 0.0,
-    knot_darkness_spread_mm: float = 8.0,
-    knot_stain_color: Any = "#3b2a1a",
-    knot_opacity: float = 1.0,
+    knot_darkness_spread_mm: float = _DEFAULT_KNOT_STAIN_SPREAD_MM,
+    knot_stain_color: Any = _DEFAULT_KNOT_STAIN_COLOR,
+    knot_opacity: float = _DEFAULT_KNOT_STAIN_OPACITY,
     size: int = 512,
 ) -> Optional[Dict[str, Dict[str, str]]]:
     size_safe = max(16, int(size))
@@ -1233,9 +1240,9 @@ def _build_veneer_payload(
     color_stops: Any = None,
     clip: float = 1.0,
     knot_darkness: float = 0.0,
-    knot_darkness_spread_mm: float = 8.0,
-    knot_stain_color: Any = "#3b2a1a",
-    knot_opacity: float = 1.0,
+    knot_darkness_spread_mm: float = _DEFAULT_KNOT_STAIN_SPREAD_MM,
+    knot_stain_color: Any = _DEFAULT_KNOT_STAIN_COLOR,
+    knot_opacity: float = _DEFAULT_KNOT_STAIN_OPACITY,
 ) -> Optional[Dict[str, Any]]:
     growth_layer_fields = layers_data.get("growth_layer_fields") or []
     normalized = _nearest_ring_normalized_field(growth_layer_fields, clip=float(clip))
@@ -2731,14 +2738,26 @@ def render_ring_color_overlays(req: RenderRingColorOverlaysRequest):
 
         size = max(16, int(req.size or 512))
         clip = max(1e-6, float(req.ring_color_clip if req.ring_color_clip is not None else 1.0))
-        knot_darkness = float(req.ring_color_knot_darkness if req.ring_color_knot_darkness is not None else 0.50)
+        knot_darkness = float(
+            req.ring_color_knot_darkness
+            if req.ring_color_knot_darkness is not None
+            else _DEFAULT_KNOT_STAIN_DARKNESS
+        )
         knot_darkness_spread = max(
             1e-6,
-            float(req.ring_color_knot_spread_mm if req.ring_color_knot_spread_mm is not None else 8.0),
+            float(
+                req.ring_color_knot_spread_mm
+                if req.ring_color_knot_spread_mm is not None
+                else _DEFAULT_KNOT_STAIN_SPREAD_MM
+            ),
         )
-        knot_stain_color = str(req.ring_color_knot_stain_color or "#3b2a1a")
+        knot_stain_color = str(req.ring_color_knot_stain_color or _DEFAULT_KNOT_STAIN_COLOR)
         knot_opacity = float(np.clip(
-            float(req.ring_color_knot_opacity if req.ring_color_knot_opacity is not None else 1.0),
+            float(
+                req.ring_color_knot_opacity
+                if req.ring_color_knot_opacity is not None
+                else _DEFAULT_KNOT_STAIN_OPACITY
+            ),
             0.0,
             1.0,
         ))
@@ -3522,13 +3541,27 @@ def simulate(config: BoardConfig):
         veneer_payload = None
         ring_color_kwargs = {
             "size": 512,
-            "color_stops": (getattr(config, "ring_color_stops", "") or None),
+            "color_stops": (getattr(config, "ring_color_stops", "") or _DEFAULT_RING_COLOR_STOPS_TEXT),
             "clip": float(getattr(config, "ring_color_clip", 1.0) or 1.0),
-            "knot_darkness": float(getattr(config, "ring_color_knot_darkness", 0.50) or 0.0),
-            "knot_darkness_spread_mm": float(getattr(config, "ring_color_knot_spread_mm", 8.0) or 8.0),
-            "knot_stain_color": str(getattr(config, "ring_color_knot_stain_color", "#3b2a1a") or "#3b2a1a"),
+            "knot_darkness": float(
+                getattr(config, "ring_color_knot_darkness", _DEFAULT_KNOT_STAIN_DARKNESS)
+                if getattr(config, "ring_color_knot_darkness", None) is not None
+                else _DEFAULT_KNOT_STAIN_DARKNESS
+            ),
+            "knot_darkness_spread_mm": float(
+                getattr(config, "ring_color_knot_spread_mm", _DEFAULT_KNOT_STAIN_SPREAD_MM)
+                or _DEFAULT_KNOT_STAIN_SPREAD_MM
+            ),
+            "knot_stain_color": str(
+                getattr(config, "ring_color_knot_stain_color", _DEFAULT_KNOT_STAIN_COLOR)
+                or _DEFAULT_KNOT_STAIN_COLOR
+            ),
             "knot_opacity": float(np.clip(
-                float(getattr(config, "ring_color_knot_opacity", 1.0) or 0.0),
+                float(
+                    getattr(config, "ring_color_knot_opacity", _DEFAULT_KNOT_STAIN_OPACITY)
+                    if getattr(config, "ring_color_knot_opacity", None) is not None
+                    else _DEFAULT_KNOT_STAIN_OPACITY
+                ),
                 0.0,
                 1.0,
             )),
