@@ -121,6 +121,13 @@ _RELEVANT_CONFIG_KEYS = {
     "rand_fibers",
     "out_of_plane_threshold",
     "snr",
+    # Ring-color rendering controls
+    "ring_color_stops",
+    "ring_color_clip",
+    "ring_color_knot_darkness",
+    "ring_color_knot_spread_mm",
+    "ring_color_knot_stain_color",
+    "ring_color_knot_opacity",
 }
 
 
@@ -1271,6 +1278,28 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         1e-6,
         float(resolve("ring_color_clip", getattr(args, "ring_color_clip", None), 1.0)),
     )
+    ring_color_knot_darkness = min(
+        1.0,
+        max(
+            0.0,
+            float(resolve("ring_color_knot_darkness", getattr(args, "ring_color_knot_darkness", None), 0.50)),
+        ),
+    )
+    ring_color_knot_spread_mm = max(
+        1e-6,
+        float(resolve("ring_color_knot_spread_mm", getattr(args, "ring_color_knot_spread_mm", None), 8.0)),
+    )
+    ring_color_knot_stain_color = str(
+        resolve("ring_color_knot_stain_color", getattr(args, "ring_color_knot_stain_color", None), "#3b2a1a")
+        or "#3b2a1a"
+    )
+    ring_color_knot_opacity = min(
+        1.0,
+        max(
+            0.0,
+            float(resolve("ring_color_knot_opacity", getattr(args, "ring_color_knot_opacity", None), 1.0)),
+        ),
+    )
 
     photo_steps = resolve("photorealistic_ddim_steps", args.photorealistic_ddim_steps, None)
     photo_guidance_spec = _parse_float_or_range_arg(
@@ -1400,6 +1429,10 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         print(
             "[board-cli] normalized ring-color surfaces enabled: "
             f"clip=+/-{ring_color_clip:.6g}; "
+            f"knot_darkness={ring_color_knot_darkness:.3g}; "
+            f"knot_spread={ring_color_knot_spread_mm:.3g} mm; "
+            f"knot_opacity={ring_color_knot_opacity:.3g}; "
+            f"knot_stain={ring_color_knot_stain_color}; "
             "using nearest growth-layer scalar field normalized by local adjacent-ring spacing."
         )
     if placement_policy.mode == "dimensions":
@@ -1684,14 +1717,14 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
 
         if ring_color_need:
             knot_mask = None
+            knot_field = layers_data.get("ttt_live")
+            if knot_field is None:
+                knot_field = layers_data.get("ttt")
             if not bool(show_inside):
-                knot_field = layers_data.get("ttt_live")
-                if knot_field is None:
-                    knot_field = layers_data.get("ttt")
                 if knot_field is not None:
                     try:
                         knot_arr = np.asarray(to_numpy(knot_field), dtype=np.float32)
-                        knot_mask = knot_arr < float(cfg.knot_inside_limit)
+                        knot_mask = knot_arr <= float(cfg.knot_inside_limit)
                     except Exception:
                         knot_mask = None
             ring_color_pngs = _build_growth_color_surface_pngs(
@@ -1700,6 +1733,12 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
                 color_stops=ring_color_stops,
                 clip=float(ring_color_clip),
                 knot_mask=knot_mask,
+                knot_field=knot_field,
+                knot_inside_limit=float(cfg.knot_inside_limit),
+                knot_darkness=float(ring_color_knot_darkness),
+                knot_darkness_spread_mm=float(ring_color_knot_spread_mm),
+                knot_stain_color=ring_color_knot_stain_color,
+                knot_opacity=float(ring_color_knot_opacity),
             )
             missing = [key for key in ("ring_color_1", "ring_color_2", "ring_color_3", "ring_color_4") if key not in ring_color_pngs]
             if missing:
@@ -2043,6 +2082,10 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
             "enabled": bool("ring_color" in outputs),
             "stops": ring_color_stops,
             "clip": float(ring_color_clip),
+            "knot_darkness": float(ring_color_knot_darkness),
+            "knot_spread_mm": float(ring_color_knot_spread_mm),
+            "knot_stain_color": ring_color_knot_stain_color,
+            "knot_opacity": float(ring_color_knot_opacity),
             "normalization": "nearest growth-layer scalar divided by local adjacent-layer scalar spacing",
         },
         "fiber_blur_sigma": _serialize_range_spec(fiber_blur_spec),

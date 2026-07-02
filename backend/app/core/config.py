@@ -145,6 +145,10 @@ class BoardConfig(BaseModel):
     display_ring_color: bool = False
     ring_color_stops: str = ""
     ring_color_clip: float = 1.0
+    ring_color_knot_darkness: float = 0.50
+    ring_color_knot_spread_mm: float = 8.0
+    ring_color_knot_stain_color: str = "#3b2a1a"
+    ring_color_knot_opacity: float = 1.0
     
     transparent: bool = True
     board_opacity: float = 0.8

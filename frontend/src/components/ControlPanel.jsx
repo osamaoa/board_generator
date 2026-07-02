@@ -284,6 +284,18 @@ const ControlPanel = ({
         if (key === 'random_taper_max') {
             nextConfig.random_taper_max = Math.max(0, toNumber(nextConfig.random_taper_max, defaultRandomTaperMax));
         }
+        if (key === 'ring_color_knot_darkness') {
+            nextConfig.ring_color_knot_darkness = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_darkness, 0.50)));
+        }
+        if (key === 'ring_color_knot_spread_mm') {
+            nextConfig.ring_color_knot_spread_mm = Math.max(1e-6, toNumber(nextConfig.ring_color_knot_spread_mm, 8.0));
+        }
+        if (key === 'ring_color_knot_stain_color') {
+            nextConfig.ring_color_knot_stain_color = normalizeHexColor(nextConfig.ring_color_knot_stain_color, '#3b2a1a');
+        }
+        if (key === 'ring_color_knot_opacity') {
+            nextConfig.ring_color_knot_opacity = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_opacity, 1.0)));
+        }
         if (key === 'knot_generator_min_rd_minus_rl_mm') {
             nextConfig.knot_generator_min_rd_minus_rl_mm = Math.max(0, toNumber(nextConfig.knot_generator_min_rd_minus_rl_mm, 30.0));
         }
@@ -1100,7 +1112,7 @@ const ControlPanel = ({
                                     checked={!!config.display_ring_color}
                                     onChange={(e) => handleChange('display_ring_color', e.target.checked, 'bool')}
                                 />
-                                <span>Initial Color Field</span>
+                                <span>Initial Color Field (requires new Generate Board)</span>
                             </label>
                             <label className="toggle">
                                 <input type="checkbox" checked={!!config.display_surface_mesh} onChange={(e) => handleChange('display_surface_mesh', e.target.checked, 'bool')} />
@@ -1215,53 +1227,102 @@ const ControlPanel = ({
                                     <strong>{toNumber(config.contour_line_width).toFixed(1)}</strong>
                                 </div>
                             </label>
-                            <label className="field">
-                                <span>Color Clip</span>
-                                <div className="range-row">
-                                    <input type="range" min={0.1} max={2.5} step={0.05} value={toNumber(config.ring_color_clip, 1.0)} onChange={(e) => handleChange('ring_color_clip', e.target.value, 'number')} />
-                                    <strong>{toNumber(config.ring_color_clip, 1.0).toFixed(2)}</strong>
-                                </div>
-                            </label>
                         </div>
 
-                        <div className="ring-color-editor">
-                            <div className="ring-color-toolbar">
-                                <span>Color Stops</span>
-                                <button type="button" onClick={addRingColorStop}>Add Stop</button>
-                                <button type="button" onClick={resetRingColorStops}>Reset</button>
-                            </div>
-                            <div className="ring-color-stops">
-                                {ringColorStops.map((stop, index) => (
-                                    <div className="ring-color-stop-row" key={`ring-color-stop-${index}`}>
-                                        <label className="field compact">
-                                            <span>Level</span>
-                                            <input
-                                                type="number"
-                                                step={0.01}
-                                                value={stop.level}
-                                                onChange={(e) => updateRingColorStop(index, 'level', e.target.value)}
-                                            />
+                        {!!config.display_ring_color && (
+                            <>
+                                <div className="color-control-group">
+                                    <div className="color-control-header">
+                                        <span>Ring Mapping</span>
+                                    </div>
+                                    <div className="field-grid single">
+                                        <label className="field">
+                                            <span>Color Clip</span>
+                                            <div className="range-row">
+                                                <input type="range" min={0.1} max={2.5} step={0.05} value={toNumber(config.ring_color_clip, 1.0)} onChange={(e) => handleChange('ring_color_clip', e.target.value, 'number')} />
+                                                <strong>{toNumber(config.ring_color_clip, 1.0).toFixed(2)}</strong>
+                                            </div>
                                         </label>
-                                        <label className="field compact color-field">
-                                            <span>Color</span>
+                                    </div>
+
+                                    <div className="ring-color-editor">
+                                        <div className="ring-color-toolbar">
+                                            <span>Color Stops</span>
+                                            <button type="button" onClick={addRingColorStop}>Add Stop</button>
+                                            <button type="button" onClick={resetRingColorStops}>Reset</button>
+                                        </div>
+                                        <div className="ring-color-stops">
+                                            {ringColorStops.map((stop, index) => (
+                                                <div className="ring-color-stop-row" key={`ring-color-stop-${index}`}>
+                                                    <label className="field compact">
+                                                        <span>Level</span>
+                                                        <input
+                                                            type="number"
+                                                            step={0.01}
+                                                            value={stop.level}
+                                                            onChange={(e) => updateRingColorStop(index, 'level', e.target.value)}
+                                                        />
+                                                    </label>
+                                                    <label className="field compact color-field">
+                                                        <span>Color</span>
+                                                        <input
+                                                            type="color"
+                                                            value={stop.color}
+                                                            onChange={(e) => updateRingColorStop(index, 'color', e.target.value)}
+                                                        />
+                                                    </label>
+                                                    <button
+                                                        type="button"
+                                                        className="ring-color-remove"
+                                                        disabled={ringColorStops.length <= 2}
+                                                        onClick={() => removeRingColorStop(index)}
+                                                    >
+                                                        Remove
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="color-control-group">
+                                    <div className="color-control-header">
+                                        <span>Knot Staining</span>
+                                    </div>
+                                    <div className="knot-stain-layout">
+                                        <label className="field knot-color-field">
+                                            <span>Stain Color</span>
                                             <input
                                                 type="color"
-                                                value={stop.color}
-                                                onChange={(e) => updateRingColorStop(index, 'color', e.target.value)}
+                                                value={normalizeHexColor(config.ring_color_knot_stain_color, '#3b2a1a')}
+                                                onChange={(e) => handleChange('ring_color_knot_stain_color', e.target.value)}
                                             />
                                         </label>
-                                        <button
-                                            type="button"
-                                            className="ring-color-remove"
-                                            disabled={ringColorStops.length <= 2}
-                                            onClick={() => removeRingColorStop(index)}
-                                        >
-                                            Remove
-                                        </button>
+                                        <label className="field">
+                                            <span>Darkness</span>
+                                            <div className="range-row">
+                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_darkness, 0.50)} onChange={(e) => handleChange('ring_color_knot_darkness', e.target.value, 'number')} />
+                                                <strong>{toNumber(config.ring_color_knot_darkness, 0.50).toFixed(2)}</strong>
+                                            </div>
+                                        </label>
+                                        <label className="field">
+                                            <span>Opacity</span>
+                                            <div className="range-row">
+                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_opacity, 1.0)} onChange={(e) => handleChange('ring_color_knot_opacity', e.target.value, 'number')} />
+                                                <strong>{toNumber(config.ring_color_knot_opacity, 1.0).toFixed(2)}</strong>
+                                            </div>
+                                        </label>
+                                        <label className="field">
+                                            <span>Spread</span>
+                                            <div className="range-row">
+                                                <input type="range" min={0.5} max={40} step={0.5} value={toNumber(config.ring_color_knot_spread_mm, 8.0)} onChange={(e) => handleChange('ring_color_knot_spread_mm', e.target.value, 'number')} />
+                                                <strong>{toNumber(config.ring_color_knot_spread_mm, 8.0).toFixed(1)}</strong>
+                                            </div>
+                                        </label>
                                     </div>
-                                ))}
-                            </div>
-                        </div>
+                                </div>
+                            </>
+                        )}
 
                         <div className="field-grid">
                             <label className="field">
