@@ -19,6 +19,7 @@ import uuid
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 import scipy.io
 from scipy.interpolate import griddata
+from scipy.ndimage import map_coordinates
 
 class NanSafeEncoder(json.JSONEncoder):
     """JSON encoder that converts NaN/Inf to null."""
@@ -178,6 +179,13 @@ def _pil_bilinear() -> int:
         return int(Image.Resampling.BILINEAR)
     except AttributeError:
         return int(Image.BILINEAR)
+
+
+def _pil_lanczos() -> int:
+    try:
+        return int(Image.Resampling.LANCZOS)
+    except AttributeError:
+        return int(Image.LANCZOS)
 
 
 def _surface_meta(board_outline: Dict[str, List[float]]) -> Dict[str, Dict[str, Any]]:
@@ -398,7 +406,26 @@ def _nearest_ring_normalized_field(
     if not fields:
         return np.empty((0, 0, 0), dtype=np.float32)
 
-    stack = np.stack(fields, axis=-1).astype(np.float32, copy=False)
+    return _nearest_ring_normalized_arrays(fields, clip=clip)
+
+
+def _nearest_ring_normalized_arrays(
+    fields: List[np.ndarray],
+    *,
+    clip: float = 1.0,
+) -> np.ndarray:
+    if not fields:
+        return np.empty((0, 0), dtype=np.float32)
+    shape = tuple(int(v) for v in np.asarray(fields[0]).shape)
+    usable = []
+    for field in fields:
+        arr = np.asarray(field, dtype=np.float32)
+        if arr.shape == shape:
+            usable.append(arr)
+    if not usable:
+        return np.empty((0, 0), dtype=np.float32)
+
+    stack = np.stack(usable, axis=-1).astype(np.float32, copy=False)
     finite = np.isfinite(stack)
     abs_stack = np.where(finite, np.abs(stack), np.inf)
     nearest_idx = np.argmin(abs_stack, axis=-1)
@@ -428,6 +455,45 @@ def _nearest_ring_normalized_field(
     normalized = np.clip(normalized, -clip_value, clip_value)
     normalized = np.where(has_value & np.isfinite(normalized), normalized, np.nan)
     return normalized.astype(np.float32, copy=False)
+
+
+def _ring_interval_phase_arrays(
+    fields: List[np.ndarray],
+    *,
+    clip: float = 1.0,
+) -> np.ndarray:
+    if not fields:
+        return np.empty((0, 0), dtype=np.float32)
+    shape = tuple(int(v) for v in np.asarray(fields[0]).shape)
+    usable = []
+    for field in fields:
+        arr = np.asarray(field, dtype=np.float32)
+        if arr.shape == shape:
+            usable.append(arr)
+    if len(usable) < 2:
+        return _nearest_ring_normalized_arrays(usable, clip=clip)
+
+    stack = np.stack(usable, axis=-1).astype(np.float32, copy=False)
+    inner = stack[..., :-1]
+    outer = stack[..., 1:]
+    finite_pair = np.isfinite(inner) & np.isfinite(outer)
+    bracket = finite_pair & (inner >= 0.0) & (outer <= 0.0)
+    score = np.where(bracket, np.abs(inner) + np.abs(outer), np.inf)
+    pair_idx = np.argmin(score, axis=-1)
+    has_pair = np.isfinite(np.min(score, axis=-1))
+
+    inner_sel = np.take_along_axis(inner, pair_idx[..., None], axis=-1)[..., 0]
+    outer_sel = np.take_along_axis(outer, pair_idx[..., None], axis=-1)[..., 0]
+    denom = inner_sel - outer_sel
+    with np.errstate(invalid="ignore", divide="ignore"):
+        phase = inner_sel / denom
+    phase = np.clip(phase, 0.0, 1.0) - 0.5
+
+    fallback = _nearest_ring_normalized_arrays(usable, clip=clip)
+    values = np.where(has_pair & np.isfinite(phase), phase, fallback)
+    clip_value = max(1e-6, float(clip))
+    values = np.clip(values, -clip_value, clip_value)
+    return values.astype(np.float32, copy=False)
 
 
 def _colorize_normalized_ring_values(values: np.ndarray, stops: List[Tuple[float, np.ndarray]]) -> np.ndarray:
@@ -842,6 +908,400 @@ def _build_log_ring_color_overlay_payload(
         ["y_min", "y_max"],
         size=size_safe,
     )
+
+
+def _axis_fractional_indices(values: np.ndarray, axis_values: Any) -> np.ndarray:
+    coords = np.asarray(axis_values, dtype=np.float32)
+    vals = np.asarray(values, dtype=np.float32)
+    out = np.full(vals.shape, np.nan, dtype=np.float32)
+    finite = np.isfinite(vals)
+    if coords.ndim != 1 or coords.size < 2 or not np.any(finite):
+        return out
+    if coords[0] > coords[-1]:
+        coords = coords[::-1]
+        reverse = True
+    else:
+        reverse = False
+    idx = np.arange(coords.size, dtype=np.float32)
+    interp = np.interp(vals[finite], coords, idx, left=np.nan, right=np.nan).astype(np.float32)
+    if reverse:
+        interp = (coords.size - 1) - interp
+    out[finite] = interp
+    return out
+
+
+def _sample_volume_on_xyz(volume: Any, mesh: Any, x: np.ndarray, y: np.ndarray, z: np.ndarray) -> np.ndarray:
+    arr = np.asarray(to_numpy(volume), dtype=np.float32)
+    if arr.ndim != 3 or arr.size == 0:
+        return np.full(np.asarray(x).shape, np.nan, dtype=np.float32)
+    xi = _axis_fractional_indices(x, getattr(mesh, "x_coords", []))
+    yi = _axis_fractional_indices(y, getattr(mesh, "y_coords", []))
+    zi = _axis_fractional_indices(z, getattr(mesh, "z_coords", []))
+    valid = np.isfinite(xi) & np.isfinite(yi) & np.isfinite(zi)
+    sampled = np.full(np.asarray(x).shape, np.nan, dtype=np.float32)
+    if not np.any(valid):
+        return sampled
+    coords = np.vstack([yi[valid], xi[valid], zi[valid]])
+    sampled[valid] = map_coordinates(arr, coords, order=1, mode="constant", cval=np.nan).astype(np.float32)
+    return sampled
+
+
+def _reduce_surface_knot_field(field: Any) -> Optional[np.ndarray]:
+    if field is None:
+        return None
+    arr = np.asarray(to_numpy(field), dtype=np.float32)
+    if arr.ndim == 4:
+        finite = np.isfinite(arr)
+        arr = np.min(np.where(finite, arr, np.inf), axis=3)
+        arr = np.where(np.any(finite, axis=3), arr, np.nan)
+    if arr.ndim == 3 and arr.shape[-1] == 1:
+        arr = arr[..., 0]
+    if arr.ndim != 2:
+        return None
+    return arr.astype(np.float32, copy=False)
+
+
+def _evaluate_np_field_function(func: Any, values: np.ndarray) -> np.ndarray:
+    vals = np.asarray(values, dtype=np.float32)
+    try:
+        out = np.asarray(to_numpy(func(vals)), dtype=np.float32)
+    except Exception:
+        out = np.zeros_like(vals, dtype=np.float32)
+    if out.shape != vals.shape:
+        out = np.resize(out, vals.shape).astype(np.float32, copy=False)
+    return np.where(np.isfinite(out), out, 0.0).astype(np.float32, copy=False)
+
+
+def _as_float_array(value: Any) -> np.ndarray:
+    return np.asarray(to_numpy(value), dtype=np.float32).reshape(-1)
+
+
+def _smooth_sigmoid_np(values: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-np.clip(values, -60.0, 60.0)))
+
+
+def _evaluate_veneer_smooth_radial_fields(
+    config: BoardConfig,
+    knot_system: Any,
+    x_grid: np.ndarray,
+    y_grid: np.ndarray,
+    z_grid: np.ndarray,
+    *,
+    clip: float = 1.0,
+) -> Optional[np.ndarray]:
+    splines = list(getattr(knot_system, "splines", []) or [])
+    if not splines:
+        return None
+    try:
+        x_np = np.asarray(x_grid, dtype=np.float32)
+        y_np = np.asarray(y_grid, dtype=np.float32)
+        z_np = np.asarray(z_grid, dtype=np.float32)
+        if x_np.ndim != 2 or y_np.shape != x_np.shape or z_np.shape != x_np.shape:
+            return None
+
+        h, w = x_np.shape
+        out = np.full((h, w), np.nan, dtype=np.float32)
+        max_points = 90_000
+        chunk_cols = max(4, min(w, int(max_points / max(1, h))))
+        n_knots = int(getattr(knot_system, "n_knots", 0) or 0)
+
+        if n_knots > 0:
+            th0 = _as_float_array(getattr(knot_system, "th0", []))
+            z0 = _as_float_array(getattr(knot_system, "z0", []))
+            c1 = _as_float_array(getattr(knot_system, "c1", []))
+            c2 = _as_float_array(getattr(knot_system, "c2", []))
+            k = _as_float_array(getattr(knot_system, "k", []))
+            kp = _as_float_array(getattr(knot_system, "kp", []))
+            abump = _as_float_array(getattr(knot_system, "Abump", []))
+            aexp = _as_float_array(getattr(knot_system, "Aexp", []))
+            bbump = _as_float_array(getattr(knot_system, "Bbump", []))
+            usable_knots = min(
+                n_knots,
+                th0.size,
+                z0.size,
+                c1.size,
+                c2.size,
+                k.size,
+                kp.size,
+                abump.size,
+                aexp.size,
+                bbump.size,
+            )
+            if usable_knots <= 0:
+                n_knots = 0
+            else:
+                th0 = th0[:usable_knots]
+                z0 = z0[:usable_knots]
+                c1 = c1[:usable_knots]
+                c2 = c2[:usable_knots]
+                k = k[:usable_knots]
+                kp = np.maximum(kp[:usable_knots], 1e-6)
+                abump = abump[:usable_knots]
+                aexp = aexp[:usable_knots]
+                bbump = bbump[:usable_knots]
+                n_knots = usable_knots
+
+        pmin = float(getattr(config, "soft_clamp_pmin", 2.0) or 2.0)
+        alpha = float(getattr(config, "soft_clamp_alpha", 1.0) or 1.0)
+        knot_gate_mm = 4.0
+        radial_gate_mm = 3.0
+
+        for c0 in range(0, w, chunk_cols):
+            c1_idx = min(w, c0 + chunk_cols)
+            x_chunk = x_np[:, c0:c1_idx]
+            y_chunk = y_np[:, c0:c1_idx]
+            z_chunk = z_np[:, c0:c1_idx]
+            taper = _evaluate_np_field_function(getattr(knot_system, "taper", lambda z: 0.0), z_chunk)
+            x_trans = x_chunk + _evaluate_np_field_function(getattr(knot_system, "crook_x", lambda z: 0.0), z_chunk)
+            y_trans = y_chunk + _evaluate_np_field_function(getattr(knot_system, "crook_y", lambda z: 0.0), z_chunk)
+            radius_sq = x_trans * x_trans + y_trans * y_trans
+            theta = np.arctan2(y_chunk, x_chunk).astype(np.float32, copy=False)
+
+            if n_knots > 0:
+                cos_th0 = np.cos(th0)[None, None, :]
+                sin_th0 = np.sin(th0)[None, None, :]
+                x_e = x_trans[..., None]
+                y_e = y_trans[..., None]
+                z_e = z_chunk[..., None]
+                radial_coord = x_e * cos_th0 - y_e * sin_th0
+                tangential_coord = x_e * sin_th0 + y_e * cos_th0
+                knot_axis_z = c1[None, None, :] * radial_coord**2 + c2[None, None, :] * radial_coord + z0[None, None, :]
+                longitudinal_offset = z_e - knot_axis_z
+                term_ang = np.arctan2(tangential_coord, radial_coord) ** 2
+                p = np.sqrt(
+                    longitudinal_offset**2
+                    + (radial_coord**2 + tangential_coord**2)
+                    * term_ang
+                    / (kp[None, None, :] ** 2)
+                )
+                d = np.clip(alpha * (p - pmin), -60.0, 60.0)
+                w_soft = 1.0 / (1.0 + np.exp(-d))
+                p = w_soft * p + (1.0 - w_soft) * pmin
+                radial_gate = _smooth_sigmoid_np(radial_coord / radial_gate_mm)
+
+            fields: List[np.ndarray] = []
+            for spline in splines:
+                ro = np.asarray(spline(theta), dtype=np.float32) - taper
+                ro = np.maximum(ro, 1.0)
+                if n_knots > 0:
+                    ro_e = ro[..., None]
+                    term_knot = (
+                        k[None, None, :] * ro_e
+                        + abump[None, None, :]
+                        * np.power(ro_e, aexp[None, None, :])
+                        * np.power(np.maximum(p, 1e-6), -bbump[None, None, :])
+                    )
+                    denom = np.maximum(1e-6, 1.0 - k[None, None, :])
+                    pmax_base = abump[None, None, :] * np.power(ro_e, aexp[None, None, :] - 1.0) / denom
+                    pmax = np.power(np.maximum(pmax_base, 1e-9), 1.0 / bbump[None, None, :])
+                    influence_gate = _smooth_sigmoid_np((pmax - p) / knot_gate_mm) * radial_gate
+                    delta = np.maximum(term_knot - ro_e, 0.0) * influence_gate
+                    delta = np.where(np.isfinite(delta), delta, 0.0)
+                    delta = np.minimum(delta, 0.6 * ro_e)
+                    delta_combined = np.sqrt(np.sum(delta * delta, axis=-1))
+                    ro_eff = np.maximum(ro + delta_combined, 1.0)
+                else:
+                    ro_eff = ro
+                fields.append((radius_sq - ro_eff * ro_eff).astype(np.float32, copy=False))
+
+            chunk_values = _ring_interval_phase_arrays(fields, clip=float(clip))
+            if chunk_values.shape == x_chunk.shape:
+                out[:, c0:c1_idx] = chunk_values
+
+        if not np.any(np.isfinite(out)):
+            return None
+        return out.astype(np.float32, copy=False)
+    except Exception as exc:
+        print(f"Veneer smooth radial field error: {exc}")
+        return None
+
+
+def _build_veneer_payload(
+    config: BoardConfig,
+    knot_system: Any,
+    mesh: Any,
+    layers_data: Dict[str, Any],
+    *,
+    color_stops: Any = None,
+    clip: float = 1.0,
+    knot_darkness: float = 0.0,
+    knot_darkness_spread_mm: float = 8.0,
+    knot_stain_color: Any = "#3b2a1a",
+    knot_opacity: float = 1.0,
+) -> Optional[Dict[str, Any]]:
+    growth_layer_fields = layers_data.get("growth_layer_fields") or []
+    normalized = _nearest_ring_normalized_field(growth_layer_fields, clip=float(clip))
+    if normalized.ndim != 3 or normalized.size == 0:
+        return None
+
+    try:
+        x_coords = np.asarray(getattr(mesh, "x_coords", []), dtype=np.float32)
+        y_coords = np.asarray(getattr(mesh, "y_coords", []), dtype=np.float32)
+        z_coords = np.asarray(getattr(mesh, "z_coords", []), dtype=np.float32)
+        if x_coords.size < 2 or y_coords.size < 2 or z_coords.size < 2:
+            return None
+
+        x_center = 0.5 * (float(config.board_x_min) + float(config.board_x_max))
+        y_center = 0.5 * (float(config.board_y_min) + float(config.board_y_max))
+        z_min = float(np.min(z_coords))
+        z_max = float(np.max(z_coords))
+        log_length = max(1e-6, z_max - z_min)
+
+        outer = max(1e-6, float(getattr(config, "veneer_outer_radius_mm", 70.0) or 70.0))
+        inner = max(0.0, float(getattr(config, "veneer_inner_radius_mm", 20.0) or 20.0))
+        if inner >= outer:
+            inner = max(0.0, outer - 1.0)
+        thickness = max(1e-6, float(getattr(config, "veneer_thickness_mm", 3.0) or 3.0))
+        requested_length = max(0.0, float(getattr(config, "veneer_length_mm", 0.0) or 0.0))
+        turns_to_inner = max(0.0, (outer - inner) / thickness)
+        theta_limit = 2.0 * math.pi * turns_to_inner
+        if theta_limit <= 1e-6:
+            return None
+
+        # In rotary peeling, one full revolution removes one veneer thickness.
+        dense_count = max(512, min(20000, int(math.ceil(theta_limit * 48.0))))
+        theta_dense = np.linspace(0.0, theta_limit, dense_count, dtype=np.float32)
+        radius_dense = outer - (thickness * theta_dense / (2.0 * math.pi))
+        radius_dense = np.maximum(radius_dense, inner)
+        dtheta = np.diff(theta_dense)
+        radius_mid = 0.5 * (radius_dense[:-1] + radius_dense[1:])
+        dr_dtheta = thickness / (2.0 * math.pi)
+        ds = np.sqrt(radius_mid**2 + dr_dtheta**2) * dtheta
+        arc_dense = np.concatenate([[0.0], np.cumsum(ds)]).astype(np.float32)
+        max_length = float(arc_dense[-1])
+        target_length = min(max_length, requested_length) if requested_length > 0.0 else max_length
+        if target_length <= 1e-6:
+            return None
+
+        length_samples = max(64, min(2400, int(getattr(config, "veneer_sheet_samples_length", 900) or 900)))
+        width_samples = max(32, min(1200, int(getattr(config, "veneer_sheet_samples_width", 260) or 260)))
+        sheet_s = np.linspace(0.0, target_length, length_samples, dtype=np.float32)
+        theta = np.interp(sheet_s, arc_dense, theta_dense).astype(np.float32)
+        radius = np.interp(sheet_s, arc_dense, radius_dense).astype(np.float32)
+        z_vals = np.linspace(z_min, z_max, width_samples, dtype=np.float32)
+
+        x_curve = x_center + radius * np.cos(theta)
+        y_curve = y_center + radius * np.sin(theta)
+        x_grid = np.broadcast_to(x_curve[None, :], (width_samples, length_samples))
+        y_grid = np.broadcast_to(y_curve[None, :], (width_samples, length_samples))
+        z_grid = np.broadcast_to(z_vals[:, None], (width_samples, length_samples))
+
+        knot_field = layers_data.get("ttt_live")
+        if knot_field is None:
+            knot_field = layers_data.get("ttt")
+        knot_sheet = None
+        if knot_field is not None:
+            knot_sheet = _sample_volume_on_xyz(knot_field, mesh, x_grid, y_grid, z_grid)
+
+        sheet_values = _evaluate_veneer_smooth_radial_fields(
+            config,
+            knot_system,
+            x_grid,
+            y_grid,
+            z_grid,
+            clip=float(clip),
+        )
+
+        if sheet_values is None:
+            sheet_values = _sample_volume_on_xyz(normalized, mesh, x_grid, y_grid, z_grid)
+        finite_sheet = np.isfinite(sheet_values)
+        if not np.any(finite_sheet):
+            return None
+
+        stops = _parse_ring_color_stops(color_stops)
+        image_arr = _colorize_normalized_ring_values(sheet_values, stops)
+        image_arr = _apply_knot_stain_to_rgb(
+            image_arr,
+            knot_sheet,
+            strength=float(knot_darkness),
+            spread_mm=float(knot_darkness_spread_mm),
+            stain_color=knot_stain_color,
+            opacity=float(knot_opacity),
+            knot_inside_limit=float(config.knot_inside_limit),
+        )
+        alpha = np.where(finite_sheet, 255, 0).astype(np.uint8)
+        sheet_rgba = np.dstack([image_arr, alpha])
+        sheet_img = Image.fromarray(sheet_rgba, mode="RGBA")
+        sheet_physical_aspect = max(1e-6, float(target_length) / max(1e-6, float(log_length)))
+        display_height = max(32, min(220, int(width_samples)))
+        display_width = max(64, int(round(display_height * sheet_physical_aspect)))
+        max_display_width = 9000
+        if display_width > max_display_width:
+            scale = max_display_width / float(display_width)
+            display_width = max_display_width
+            display_height = max(32, int(round(display_height * scale)))
+        if display_width != int(length_samples) or display_height != int(width_samples):
+            sheet_img = sheet_img.resize((int(display_width), int(display_height)), resample=_pil_lanczos())
+
+        sheet_buffer = BytesIO()
+        sheet_img.save(sheet_buffer, format="PNG", optimize=False)
+
+        preview_size = 512
+        xx = np.linspace(float(np.min(x_coords)), float(np.max(x_coords)), preview_size, dtype=np.float32)
+        yy = np.linspace(float(np.max(y_coords)), float(np.min(y_coords)), preview_size, dtype=np.float32)
+        px, py = np.meshgrid(xx, yy)
+        pz = np.full_like(px, z_max)
+        preview_values = _sample_volume_on_xyz(normalized, mesh, px, py, pz)
+        preview_arr = _colorize_normalized_ring_values(preview_values, stops)
+        preview_alpha = np.where(np.isfinite(preview_values), 255, 36).astype(np.uint8)
+        preview_img = Image.fromarray(np.dstack([preview_arr, preview_alpha]), mode="RGBA")
+        preview_draw = ImageDraw.Draw(preview_img)
+
+        def to_preview_xy(xv: np.ndarray, yv: np.ndarray) -> List[Tuple[float, float]]:
+            x_min = float(np.min(x_coords))
+            x_max = float(np.max(x_coords))
+            y_min = float(np.min(y_coords))
+            y_max = float(np.max(y_coords))
+            pxs = (np.asarray(xv) - x_min) / max(1e-9, x_max - x_min) * (preview_size - 1)
+            pys = (1.0 - ((np.asarray(yv) - y_min) / max(1e-9, y_max - y_min))) * (preview_size - 1)
+            return list(zip(pxs.astype(float).tolist(), pys.astype(float).tolist()))
+
+        preview_theta = np.linspace(0.0, float(theta[-1]), max(128, min(4000, int(length_samples * 1.5))), dtype=np.float32)
+        preview_radius = outer - (thickness * preview_theta / (2.0 * math.pi))
+        preview_radius = np.maximum(preview_radius, inner)
+        preview_x = x_center + preview_radius * np.cos(preview_theta)
+        preview_y = y_center + preview_radius * np.sin(preview_theta)
+        preview_draw.line(to_preview_xy(preview_x, preview_y), fill=(0, 146, 200, 255), width=3)
+        for rr, color in [(outer, (0, 146, 200, 130)), (inner, (0, 146, 200, 90))]:
+            bbox = to_preview_xy(
+                np.asarray([x_center - rr, x_center + rr], dtype=np.float32),
+                np.asarray([y_center + rr, y_center - rr], dtype=np.float32),
+            )
+            preview_draw.ellipse([bbox[0][0], bbox[0][1], bbox[1][0], bbox[1][1]], outline=color, width=1)
+
+        preview_buffer = BytesIO()
+        preview_img.save(preview_buffer, format="PNG", optimize=False)
+
+        return {
+            "sheet": {
+                "filename": "veneer_sheet_color.png",
+                "src": f"data:image/png;base64,{base64.b64encode(sheet_buffer.getvalue()).decode('ascii')}",
+                "width_px": int(display_width),
+                "height_px": int(display_height),
+                "sample_width_px": int(length_samples),
+                "sample_height_px": int(width_samples),
+                "physical_width_mm": float(target_length),
+                "physical_height_mm": float(log_length),
+            },
+            "preview": {
+                "filename": "veneer_spiral_preview.png",
+                "src": f"data:image/png;base64,{base64.b64encode(preview_buffer.getvalue()).decode('ascii')}",
+                "width_px": int(preview_size),
+                "height_px": int(preview_size),
+            },
+            "params": {
+                "outer_radius_mm": float(outer),
+                "inner_radius_mm": float(inner),
+                "thickness_mm": float(thickness),
+                "requested_length_mm": float(requested_length),
+                "actual_length_mm": float(target_length),
+                "log_length_mm": float(log_length),
+                "turns": float(theta[-1] / (2.0 * math.pi)),
+            },
+        }
+    except Exception as exc:
+        print(f"Veneer render error: {exc}")
+        return None
 
 
 def _classify_model_side(points: np.ndarray, board_dims: Dict[str, Any]) -> Optional[str]:
@@ -2172,7 +2632,7 @@ def render_ring_color_overlays(req: RenderRingColorOverlaysRequest):
             1.0,
         ))
         color_stops = req.ring_color_stops
-        if str(entry.get("export_mode") or "board") == "log":
+        if str(entry.get("export_mode") or "board") in {"log", "veneer"}:
             overlays = _build_log_ring_color_overlay_payload(
                 growth_fields,
                 scalar_fields.get("outer_log_field"),
@@ -2661,12 +3121,20 @@ def simulate(config: BoardConfig):
         # 1. Initialize + random-board retries for UI mode.
         # Without retries, some random cross-sections can miss the board footprint
         # and produce empty contour sets.
-        board_mode = int(getattr(config, "board_or_log", 0)) == 0
+        mode = int(getattr(config, "board_or_log", 0))
+        board_mode = mode == 0
+        veneer_mode = mode == 2
+        export_mode_name = "veneer" if veneer_mode else ("log" if not board_mode else "board")
         if not board_mode:
-            # Log-mode fiber display is intentionally disabled in the UI, so the
-            # frontend sends calc_fibers=false. Still compute the field for MAT export.
-            config.calc_fibers = True
             config.quiver_or_stream = 0
+            if veneer_mode:
+                # Veneer mode renders the flattened color field directly.
+                config.calc_fibers = False
+                config.display_contours = False
+            else:
+                # Log-mode fiber display is intentionally disabled in the UI, so the
+                # frontend sends calc_fibers=false. Still compute the field for MAT export.
+                config.calc_fibers = True
         randomize_extents_from_dims = bool(
             board_mode and getattr(config, "randomize_board_extents_from_dimensions", False)
         )
@@ -2934,25 +3402,26 @@ def simulate(config: BoardConfig):
         }
 
         ring_color_overlays = None
+        veneer_payload = None
+        ring_color_kwargs = {
+            "size": 512,
+            "color_stops": (getattr(config, "ring_color_stops", "") or None),
+            "clip": float(getattr(config, "ring_color_clip", 1.0) or 1.0),
+            "knot_darkness": float(getattr(config, "ring_color_knot_darkness", 0.50) or 0.0),
+            "knot_darkness_spread_mm": float(getattr(config, "ring_color_knot_spread_mm", 8.0) or 8.0),
+            "knot_stain_color": str(getattr(config, "ring_color_knot_stain_color", "#3b2a1a") or "#3b2a1a"),
+            "knot_opacity": float(np.clip(
+                float(getattr(config, "ring_color_knot_opacity", 1.0) or 0.0),
+                0.0,
+                1.0,
+            )),
+        }
+        knot_field = layers_data.get("ttt_live")
+        if knot_field is None:
+            knot_field = layers_data.get("ttt")
         if bool(getattr(config, "display_ring_color", False)):
             try:
-                ring_color_kwargs = {
-                    "size": 512,
-                    "color_stops": (getattr(config, "ring_color_stops", "") or None),
-                    "clip": float(getattr(config, "ring_color_clip", 1.0) or 1.0),
-                    "knot_darkness": float(getattr(config, "ring_color_knot_darkness", 0.50) or 0.0),
-                    "knot_darkness_spread_mm": float(getattr(config, "ring_color_knot_spread_mm", 8.0) or 8.0),
-                    "knot_stain_color": str(getattr(config, "ring_color_knot_stain_color", "#3b2a1a") or "#3b2a1a"),
-                    "knot_opacity": float(np.clip(
-                        float(getattr(config, "ring_color_knot_opacity", 1.0) or 0.0),
-                        0.0,
-                        1.0,
-                    )),
-                }
-                knot_field = layers_data.get("ttt_live")
-                if knot_field is None:
-                    knot_field = layers_data.get("ttt")
-                if int(config.board_or_log) == 0:
+                if mode == 0:
                     ring_color_overlays = _build_board_ring_color_overlay_payload(
                         layers_data.get("growth_layer_fields") or [],
                         knot_field=knot_field,
@@ -2971,6 +3440,23 @@ def simulate(config: BoardConfig):
             except Exception as e:
                 print(f"Ring color overlay render error: {e}")
                 ring_color_overlays = None
+        if veneer_mode:
+            try:
+                veneer_kwargs = dict(ring_color_kwargs)
+                veneer_kwargs.pop("size", None)
+                veneer_payload = _build_veneer_payload(
+                    config,
+                    k,
+                    mesh,
+                    layers_data,
+                    **veneer_kwargs,
+                )
+                if veneer_payload is None:
+                    warnings.append("Veneer rendering did not produce a valid sheet. Check spiral radius, mesh extent, and ring fields.")
+            except Exception as e:
+                print(f"Veneer render error: {e}")
+                veneer_payload = None
+                warnings.append(f"Veneer rendering failed: {e}")
 
         # 6. Knot isosurface (single board/log mesh-based knot field surface)
         knot_data = []
@@ -3294,8 +3780,8 @@ def simulate(config: BoardConfig):
         layers_data.pop("knot_influence_info", None)
 
         sim_id = _cache_simulation({
-            "export_mode": "log" if int(config.board_or_log) != 0 else "board",
-            "fiber_domain": "log" if int(config.board_or_log) != 0 else "board",
+            "export_mode": export_mode_name,
+            "fiber_domain": "log" if not board_mode else "board",
             "fibers": fiber_components_mat,
             "normals": {
                 "nx": nx_mat,
@@ -3316,12 +3802,13 @@ def simulate(config: BoardConfig):
             "growth_layers": growth_layers_mat,
             "pith_surface": pith_surface_mat,
             "knots": knot_data_mat,
+            "veneer": veneer_payload,
             "knot_sequence": dict(getattr(k, "knot_sequence_info", {}) or {}),
             "geometry_randomization": dict(getattr(k, "geometry_randomization_info", {}) or {}),
         })
 
         result = {
-            "export_mode": "log" if int(config.board_or_log) != 0 else "board",
+            "export_mode": export_mode_name,
             "layers": response_layers,
             "pith_layer": response_pith_layer,
             "contours": contour_data,
@@ -3337,6 +3824,7 @@ def simulate(config: BoardConfig):
             "normal_overlays": normal_overlays,
             "fiber_out_of_plane_overlays": fiber_out_of_plane_overlays,
             "ring_color_overlays": ring_color_overlays,
+            "veneer": veneer_payload,
             "knot_sequence": dict(getattr(k, "knot_sequence_info", {}) or {}),
             "geometry_randomization": dict(getattr(k, "geometry_randomization_info", {}) or {}),
             "warnings": warnings,

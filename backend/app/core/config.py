@@ -40,7 +40,7 @@ class BoardConfig(BaseModel):
     board_z_max: float = 145.0
 
     # General Settings
-    board_or_log: int = 0  # 0 for board; 1 for log
+    board_or_log: int = 0  # 0 for board; 1 for log; 2 for veneer
     # Preferred element size (mm) along each axis.
     mesh_size_x_mm: Optional[float] = 2.0
     mesh_size_y_mm: Optional[float] = 2.0
@@ -149,6 +149,14 @@ class BoardConfig(BaseModel):
     ring_color_knot_spread_mm: float = 8.0
     ring_color_knot_stain_color: str = "#3b2a1a"
     ring_color_knot_opacity: float = 1.0
+
+    # Veneer-mode rotary peeling controls.
+    veneer_outer_radius_mm: float = 70.0
+    veneer_inner_radius_mm: float = 20.0
+    veneer_thickness_mm: float = 3.0
+    veneer_length_mm: float = 0.0
+    veneer_sheet_samples_length: int = 900
+    veneer_sheet_samples_width: int = 260
     
     transparent: bool = True
     board_opacity: float = 0.8

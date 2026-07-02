@@ -77,6 +77,117 @@
   background: rgba(236, 251, 241, 0.96);
 }
 
+.veneer-result-panel {
+  position: absolute;
+  top: 54px;
+  left: 12px;
+  z-index: 18;
+  width: min(760px, calc(100% - 24px));
+  max-height: calc(100% - 126px);
+  overflow: auto;
+  border: 1px solid var(--shell-line);
+  border-radius: 8px;
+  background: rgba(250, 252, 255, 0.95);
+  box-shadow: 0 12px 24px rgba(20, 32, 46, 0.18);
+  backdrop-filter: blur(2px);
+  padding: 10px;
+}
+
+.veneer-result-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #c7d2dc;
+  padding-bottom: 7px;
+  margin-bottom: 8px;
+}
+
+.veneer-result-header > span {
+  font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink);
+  margin-right: auto;
+}
+
+.veneer-result-header dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+  margin: 0;
+  font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  line-height: 1.2;
+}
+
+.veneer-result-header dt {
+  color: var(--ink-soft);
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.veneer-result-header dd {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.veneer-result-grid {
+  display: grid;
+  grid-template-columns: minmax(132px, 190px) minmax(260px, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.veneer-result-figure {
+  margin: 0;
+  min-width: 0;
+}
+
+.veneer-result-figure figcaption {
+  margin-bottom: 5px;
+  font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+}
+
+.veneer-result-figure img {
+  display: block;
+  width: 100%;
+  border: 1px solid #b7c5d0;
+  border-radius: 4px;
+  background: #eff4f8;
+}
+
+.veneer-result-figure.preview img {
+  aspect-ratio: 1 / 1;
+  object-fit: contain;
+}
+
+.veneer-sheet-frame {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  border: 1px solid #b7c5d0;
+  border-radius: 4px;
+  background: #eff4f8;
+}
+
+.veneer-result-figure.sheet img {
+  width: var(--veneer-sheet-width, 100%);
+  height: var(--veneer-sheet-height, auto);
+  max-width: none;
+  border: 0;
+  border-radius: 0;
+  object-fit: fill;
+}
+
 .loading-overlay {
   position: absolute;
   top: 50%;
@@ -313,5 +424,13 @@
   .viewer-status {
     font-size: 10px;
     padding: 5px 8px;
+  }
+
+  .veneer-result-panel {
+    top: 48px;
+  }
+
+  .veneer-result-grid {
+    grid-template-columns: 1fr;
   }
 }

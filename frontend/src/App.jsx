@@ -115,6 +115,12 @@ export const defaultConfig = {
   ring_color_knot_spread_mm: 8.0,
   ring_color_knot_stain_color: '#3b2a1a',
   ring_color_knot_opacity: 1.0,
+  veneer_outer_radius_mm: 70.0,
+  veneer_inner_radius_mm: 20.0,
+  veneer_thickness_mm: 3.0,
+  veneer_length_mm: 0.0,
+  veneer_sheet_samples_length: 900,
+  veneer_sheet_samples_width: 260,
   display_board: true,
   board_opacity: 0.8,
   contour_line_width: 3.0,
@@ -258,6 +264,21 @@ export const normalizeLoadedConfig = (raw) => {
     ? next.ring_color_knot_stain_color
     : defaultConfig.ring_color_knot_stain_color;
   next.ring_color_knot_opacity = Math.min(1, Math.max(0, toNumberOr(next.ring_color_knot_opacity, defaultConfig.ring_color_knot_opacity)));
+  next.veneer_outer_radius_mm = Math.max(1e-6, toNumberOr(next.veneer_outer_radius_mm, defaultConfig.veneer_outer_radius_mm));
+  next.veneer_inner_radius_mm = Math.max(0, toNumberOr(next.veneer_inner_radius_mm, defaultConfig.veneer_inner_radius_mm));
+  next.veneer_thickness_mm = Math.max(1e-6, toNumberOr(next.veneer_thickness_mm, defaultConfig.veneer_thickness_mm));
+  next.veneer_length_mm = Math.max(0, toNumberOr(next.veneer_length_mm, defaultConfig.veneer_length_mm));
+  next.veneer_sheet_samples_length = Math.min(
+    2400,
+    Math.max(64, Math.floor(toNumberOr(next.veneer_sheet_samples_length, defaultConfig.veneer_sheet_samples_length)))
+  );
+  next.veneer_sheet_samples_width = Math.min(
+    1200,
+    Math.max(32, Math.floor(toNumberOr(next.veneer_sheet_samples_width, defaultConfig.veneer_sheet_samples_width)))
+  );
+  if (Number(next.board_or_log) === 2) {
+    next.display_contours = false;
+  }
   next.export_fiber_irregularity_strength = Math.min(2, Math.max(0, toNumberOr(next.export_fiber_irregularity_strength, defaultConfig.export_fiber_irregularity_strength)));
   next.export_ring_irregularity_strength = Math.min(2, Math.max(0, toNumberOr(next.export_ring_irregularity_strength, defaultConfig.export_ring_irregularity_strength)));
   next.photorealistic_guidance_scale = Math.max(0, toNumberOr(next.photorealistic_guidance_scale, defaultConfig.photorealistic_guidance_scale));
@@ -409,10 +430,12 @@ const buildKnotSequenceIndicator = (raw) => {
 };
 
 const applyLogModeVisualizationDefaults = (cfg) => {
-  if (!cfg || Number(cfg.board_or_log) !== 1) return cfg;
+  if (!cfg || Number(cfg.board_or_log) === 0) return cfg;
+  const veneerMode = Number(cfg.board_or_log) === 2;
   return {
     ...cfg,
     calc_fibers: false,
+    ...(veneerMode ? { display_contours: false } : {}),
     quiver_or_stream: 0,
   };
 };
@@ -854,7 +877,7 @@ function App() {
   const photorealisticLoaded = !!photorealisticCapability.loaded;
   const photorealisticReason = String(photorealisticCapability.reason || '');
   const viewerConfig = applyLogModeVisualizationDefaults(config);
-  const isLogMode = Number(config.board_or_log) === 1;
+  const isLogMode = Number(config.board_or_log) !== 0;
   const normalOverlayAvailable = !!(
     simulationData
     && simulationData.normal_overlays

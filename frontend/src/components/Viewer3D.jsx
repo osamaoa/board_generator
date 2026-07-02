@@ -1026,6 +1026,69 @@ const KnotSurface = ({ knot, boardOpacity }) => {
 };
 
 /* ── Main Viewer ── */
+const VeneerPanel = ({ veneer, visible }) => {
+    if (!visible || !veneer || typeof veneer !== 'object') return null;
+    const previewSrc = typeof veneer?.preview?.src === 'string' ? veneer.preview.src : '';
+    const sheetSrc = typeof veneer?.sheet?.src === 'string' ? veneer.sheet.src : '';
+    const sheet = veneer?.sheet && typeof veneer.sheet === 'object' ? veneer.sheet : {};
+    const params = veneer?.params && typeof veneer.params === 'object' ? veneer.params : {};
+    const actualLength = Number(params.actual_length_mm);
+    const turns = Number(params.turns);
+    const thickness = Number(params.thickness_mm);
+    const sheetWidthPx = Number(sheet.width_px);
+    const sheetHeightPx = Number(sheet.height_px);
+    const sheetStyle = Number.isFinite(sheetWidthPx) && Number.isFinite(sheetHeightPx)
+        ? {
+            '--veneer-sheet-width': `${Math.max(64, Math.round(sheetWidthPx))}px`,
+            '--veneer-sheet-height': `${Math.max(32, Math.round(sheetHeightPx))}px`,
+        }
+        : undefined;
+
+    return (
+        <div className="veneer-result-panel">
+            <div className="veneer-result-header">
+                <span>Veneer</span>
+                <dl>
+                    {Number.isFinite(actualLength) && (
+                        <>
+                            <dt>Length</dt>
+                            <dd>{actualLength.toFixed(1)} mm</dd>
+                        </>
+                    )}
+                    {Number.isFinite(turns) && (
+                        <>
+                            <dt>Turns</dt>
+                            <dd>{turns.toFixed(2)}</dd>
+                        </>
+                    )}
+                    {Number.isFinite(thickness) && (
+                        <>
+                            <dt>Thickness</dt>
+                            <dd>{thickness.toFixed(2)} mm</dd>
+                        </>
+                    )}
+                </dl>
+            </div>
+            <div className="veneer-result-grid">
+                {previewSrc && (
+                    <figure className="veneer-result-figure preview">
+                        <figcaption>Spiral Preview</figcaption>
+                        <img src={previewSrc} alt="Veneer spiral preview over log cross-section" />
+                    </figure>
+                )}
+                {sheetSrc && (
+                    <figure className="veneer-result-figure sheet" style={sheetStyle}>
+                        <figcaption>Straightened Veneer</figcaption>
+                        <div className="veneer-sheet-frame">
+                            <img src={sheetSrc} alt="Straightened veneer sheet color field" />
+                        </div>
+                    </figure>
+                )}
+            </div>
+        </div>
+    );
+};
+
 const Viewer3D = ({
     data,
     config,
@@ -1039,7 +1102,9 @@ const Viewer3D = ({
 }) => {
     const [showGrid, setShowGrid] = useState(true);
     const [useOrthographic, setUseOrthographic] = useState(false);
-    const isLogMode = Number(config?.board_or_log) === 1;
+    const mode = Number(config?.board_or_log);
+    const isLogMode = mode !== 0;
+    const isVeneerMode = mode === 2;
     const viewerBackground = '#dfe8f3';
 
     const pithLayer = useMemo(() => {
@@ -1118,6 +1183,7 @@ const Viewer3D = ({
     );
     return (
         <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+            <VeneerPanel veneer={data?.veneer} visible={isVeneerMode && !!data?.veneer} />
             <button
                 type="button"
                 onClick={() => setUseOrthographic((prev) => !prev)}
