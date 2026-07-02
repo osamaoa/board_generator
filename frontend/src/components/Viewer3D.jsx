@@ -1026,7 +1026,7 @@ const KnotSurface = ({ knot, boardOpacity }) => {
 };
 
 /* ── Main Viewer ── */
-const VeneerPanel = ({ veneer, visible }) => {
+const VeneerPanel = ({ veneer, visible, standalone = false }) => {
     if (!visible || !veneer || typeof veneer !== 'object') return null;
     const previewSrc = typeof veneer?.preview?.src === 'string' ? veneer.preview.src : '';
     const sheetSrc = typeof veneer?.sheet?.src === 'string' ? veneer.sheet.src : '';
@@ -1045,7 +1045,7 @@ const VeneerPanel = ({ veneer, visible }) => {
         : undefined;
 
     return (
-        <div className="veneer-result-panel">
+        <div className={`veneer-result-panel ${standalone ? 'standalone' : ''}`}>
             <div className="veneer-result-header">
                 <span>Veneer</span>
                 <dl>
@@ -1181,9 +1181,17 @@ const Viewer3D = ({
         () => sceneCenter.map((value) => -value),
         [sceneCenter]
     );
+
+    if (isVeneerMode) {
+        return (
+            <div className="veneer-only-viewer">
+                <VeneerPanel veneer={data?.veneer} visible={!!data?.veneer} standalone />
+            </div>
+        );
+    }
+
     return (
         <div style={{ width: '100%', height: '100%', position: 'relative' }}>
-            <VeneerPanel veneer={data?.veneer} visible={isVeneerMode && !!data?.veneer} />
             <button
                 type="button"
                 onClick={() => setUseOrthographic((prev) => !prev)}

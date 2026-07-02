@@ -950,23 +950,31 @@ const ControlPanel = ({
                 {activeSection === 'simulation' && (
                     <section className="panel-section">
                         <h3>Simulation</h3>
-                        <p className="section-copy">Define per-axis element size in mm, deterministic seed, and compute mode.</p>
-                        <div className="field-grid">
-                            <label className="field">
-                                <span>Element Size X (mm)</span>
-                                <input type="number" min={0.05} step={0.05} value={toNumber(config.mesh_size_x_mm, 2.0)} onChange={(e) => handleChange('mesh_size_x_mm', e.target.value, 'number')} />
-                            </label>
-                            <label className="field">
-                                <span>Element Size Y (mm)</span>
-                                <input type="number" min={0.05} step={0.05} value={toNumber(config.mesh_size_y_mm, 2.0)} onChange={(e) => handleChange('mesh_size_y_mm', e.target.value, 'number')} />
-                            </label>
-                        </div>
-                        <div className="field-grid single">
-                            <label className="field">
-                                <span>Element Size Z (mm)</span>
-                                <input type="number" min={0.05} step={0.05} value={toNumber(config.mesh_size_z_mm, 2.0)} onChange={(e) => handleChange('mesh_size_z_mm', e.target.value, 'number')} />
-                            </label>
-                        </div>
+                        <p className="section-copy">
+                            {toInt(config.board_or_log, 0) === 2
+                                ? 'Set deterministic seed and compute mode. Veneer color resolution is controlled by sheet samples.'
+                                : 'Define per-axis element size in mm, deterministic seed, and compute mode.'}
+                        </p>
+                        {toInt(config.board_or_log, 0) !== 2 && (
+                            <>
+                                <div className="field-grid">
+                                    <label className="field">
+                                        <span>Element Size X (mm)</span>
+                                        <input type="number" min={0.05} step={0.05} value={toNumber(config.mesh_size_x_mm, 2.0)} onChange={(e) => handleChange('mesh_size_x_mm', e.target.value, 'number')} />
+                                    </label>
+                                    <label className="field">
+                                        <span>Element Size Y (mm)</span>
+                                        <input type="number" min={0.05} step={0.05} value={toNumber(config.mesh_size_y_mm, 2.0)} onChange={(e) => handleChange('mesh_size_y_mm', e.target.value, 'number')} />
+                                    </label>
+                                </div>
+                                <div className="field-grid single">
+                                    <label className="field">
+                                        <span>Element Size Z (mm)</span>
+                                        <input type="number" min={0.05} step={0.05} value={toNumber(config.mesh_size_z_mm, 2.0)} onChange={(e) => handleChange('mesh_size_z_mm', e.target.value, 'number')} />
+                                    </label>
+                                </div>
+                            </>
+                        )}
 
                         <label className="toggle">
                             <input type="checkbox" checked={config.use_seed} onChange={(e) => handleChange('use_seed', e.target.checked, 'bool')} />

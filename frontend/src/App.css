@@ -93,6 +93,26 @@
   padding: 10px;
 }
 
+.veneer-only-viewer {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  padding: 12px;
+  background: #e6edf6;
+}
+
+.veneer-result-panel.standalone {
+  position: relative;
+  top: auto;
+  left: auto;
+  width: 100%;
+  max-height: none;
+  min-height: 100%;
+  overflow: visible;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
 .veneer-result-header {
   display: flex;
   align-items: center;

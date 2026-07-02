@@ -70,6 +70,7 @@ _SIM_CACHE: Dict[str, Dict[str, Any]] = {}
 _SIM_CACHE_ORDER: List[str] = []
 _SIM_CACHE_LIMIT = 1
 _SIM_MAX_BOARD_ATTEMPTS = 30
+_VENEER_INTERNAL_MESH_SIZE_MM = 20.0
 _DEFAULT_FIBER_IRREGULARITY_STRENGTH = 0.35
 _DEFAULT_RING_IRREGULARITY_STRENGTH = 0.40
 _DEMO_MODE = str(os.environ.get("BOARD_GENERATOR_DEMO", "")).strip().lower() in {"1", "true", "yes", "on"}
@@ -1116,6 +1117,113 @@ def _evaluate_veneer_smooth_radial_fields(
         return None
 
 
+def _evaluate_veneer_knot_field(
+    config: BoardConfig,
+    knot_system: Any,
+    x_grid: np.ndarray,
+    y_grid: np.ndarray,
+    z_grid: np.ndarray,
+) -> Optional[np.ndarray]:
+    splines = list(getattr(knot_system, "splines", []) or [])
+    n_knots = int(getattr(knot_system, "n_knots", 0) or 0)
+    if not splines or n_knots <= 0:
+        return None
+    try:
+        x_np = np.asarray(x_grid, dtype=np.float32)
+        y_np = np.asarray(y_grid, dtype=np.float32)
+        z_np = np.asarray(z_grid, dtype=np.float32)
+        if x_np.ndim != 2 or y_np.shape != x_np.shape or z_np.shape != x_np.shape:
+            return None
+
+        th0 = _as_float_array(getattr(knot_system, "th0", []))
+        z0 = _as_float_array(getattr(knot_system, "z0", []))
+        c1 = _as_float_array(getattr(knot_system, "c1", []))
+        c2 = _as_float_array(getattr(knot_system, "c2", []))
+        kp = _as_float_array(getattr(knot_system, "kp", []))
+        a1 = _as_float_array(getattr(knot_system, "a1", []))
+        a2 = _as_float_array(getattr(knot_system, "a2", []))
+        a3 = _as_float_array(getattr(knot_system, "a3", []))
+        a4 = _as_float_array(getattr(knot_system, "a4", []))
+        rl = _as_float_array(getattr(knot_system, "RL", []))
+        usable_knots = min(
+            n_knots,
+            th0.size,
+            z0.size,
+            c1.size,
+            c2.size,
+            kp.size,
+            a1.size,
+            a2.size,
+            a3.size,
+            a4.size,
+            rl.size,
+        )
+        if usable_knots <= 0:
+            return None
+
+        th0 = th0[:usable_knots]
+        z0 = z0[:usable_knots]
+        c1 = c1[:usable_knots]
+        c2 = c2[:usable_knots]
+        kp = np.maximum(kp[:usable_knots], 1e-6)
+        a1 = a1[:usable_knots]
+        a2 = a2[:usable_knots]
+        a3 = a3[:usable_knots]
+        a4 = a4[:usable_knots]
+        rl = rl[:usable_knots]
+
+        h, w = x_np.shape
+        out = np.full((h, w), np.nan, dtype=np.float32)
+        max_values = 750_000
+        chunk_cols = max(4, min(w, int(max_values / max(1, h * usable_knots))))
+        dead_knots = bool(getattr(config, "dead_knots", False))
+        outer_spline = splines[-1]
+
+        for c0 in range(0, w, chunk_cols):
+            c1_idx = min(w, c0 + chunk_cols)
+            x_chunk = x_np[:, c0:c1_idx]
+            y_chunk = y_np[:, c0:c1_idx]
+            z_chunk = z_np[:, c0:c1_idx]
+            theta = np.arctan2(y_chunk, x_chunk).astype(np.float32, copy=False)
+            ro = np.asarray(outer_spline(theta), dtype=np.float32)
+            ro_mod = ro - _evaluate_np_field_function(getattr(knot_system, "taper", lambda z: 0.0), z_chunk)
+            x_trans = x_chunk + _evaluate_np_field_function(getattr(knot_system, "crook_x", lambda z: 0.0), z_chunk)
+            y_trans = y_chunk + _evaluate_np_field_function(getattr(knot_system, "crook_y", lambda z: 0.0), z_chunk)
+
+            cos_th0 = np.cos(th0)[None, None, :]
+            sin_th0 = np.sin(th0)[None, None, :]
+            radial_coord = x_trans[..., None] * cos_th0 - y_trans[..., None] * sin_th0
+            tangential_coord = x_trans[..., None] * sin_th0 + y_trans[..., None] * cos_th0
+            knot_axis_z = c1[None, None, :] * radial_coord**2 + c2[None, None, :] * radial_coord + z0[None, None, :]
+            longitudinal_offset = z_chunk[..., None] - knot_axis_z
+
+            lx = (
+                a1[None, None, :] * radial_coord**4
+                + a2[None, None, :] * radial_coord**3
+                + a3[None, None, :] * radial_coord**2
+                + a4[None, None, :] * radial_coord
+            )
+            lx = np.maximum(lx, 0.0)
+            k_field = longitudinal_offset**2 + tangential_coord**2 / (kp[None, None, :] ** 2) - (lx / 2.0) ** 2
+            k_field = np.where(radial_coord < 0.0, np.nan, k_field)
+            k_field = np.where(radial_coord > (1.2 * ro_mod[..., None]), np.nan, k_field)
+            if dead_knots:
+                k_field = np.where(radial_coord <= rl[None, None, :], k_field, np.nan)
+            k_field = np.where(np.isfinite(k_field), k_field, np.nan)
+
+            finite = np.isfinite(k_field)
+            if np.any(finite):
+                reduced = np.min(np.where(finite, k_field, np.inf), axis=2)
+                out[:, c0:c1_idx] = np.where(np.any(finite, axis=2), reduced, np.nan)
+
+        if not np.any(np.isfinite(out)):
+            return None
+        return out.astype(np.float32, copy=False)
+    except Exception as exc:
+        print(f"Veneer knot field error: {exc}")
+        return None
+
+
 def _build_veneer_payload(
     config: BoardConfig,
     knot_system: Any,
@@ -1186,12 +1294,15 @@ def _build_veneer_payload(
         y_grid = np.broadcast_to(y_curve[None, :], (width_samples, length_samples))
         z_grid = np.broadcast_to(z_vals[:, None], (width_samples, length_samples))
 
-        knot_field = layers_data.get("ttt_live")
-        if knot_field is None:
-            knot_field = layers_data.get("ttt")
         knot_sheet = None
-        if knot_field is not None:
-            knot_sheet = _sample_volume_on_xyz(knot_field, mesh, x_grid, y_grid, z_grid)
+        if float(knot_darkness) > 0.0 and float(knot_opacity) > 0.0:
+            knot_sheet = _evaluate_veneer_knot_field(config, knot_system, x_grid, y_grid, z_grid)
+            if knot_sheet is None:
+                knot_field = layers_data.get("ttt_live")
+                if knot_field is None:
+                    knot_field = layers_data.get("ttt")
+                if knot_field is not None:
+                    knot_sheet = _sample_volume_on_xyz(knot_field, mesh, x_grid, y_grid, z_grid)
 
         sheet_values = _evaluate_veneer_smooth_radial_fields(
             config,
@@ -3131,6 +3242,12 @@ def simulate(config: BoardConfig):
                 # Veneer mode renders the flattened color field directly.
                 config.calc_fibers = False
                 config.display_contours = False
+                for attr in ("mesh_size_x_mm", "mesh_size_y_mm", "mesh_size_z_mm"):
+                    try:
+                        mesh_size = float(getattr(config, attr) or _VENEER_INTERNAL_MESH_SIZE_MM)
+                    except (TypeError, ValueError):
+                        mesh_size = _VENEER_INTERNAL_MESH_SIZE_MM
+                    setattr(config, attr, max(mesh_size, _VENEER_INTERNAL_MESH_SIZE_MM))
             else:
                 # Log-mode fiber display is intentionally disabled in the UI, so the
                 # frontend sends calc_fibers=false. Still compute the field for MAT export.
