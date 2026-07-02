@@ -108,6 +108,9 @@ export const defaultConfig = {
   display_knot_axes: false,
   display_contours: true,
   display_surface_mesh: false,
+  display_ring_color: false,
+  ring_color_stops: '-0.5:#f0bc8f;0:#9c6331;0.5:#f0bc8f',
+  ring_color_clip: 1.0,
   display_board: true,
   board_opacity: 0.8,
   contour_line_width: 3.0,
@@ -241,6 +244,10 @@ export const normalizeLoadedConfig = (raw) => {
     next.multi_knot_fiber_selection_rule = defaultConfig.multi_knot_fiber_selection_rule;
   }
   next.export_contour_line_width = Math.max(1, toNumberOr(next.export_contour_line_width, defaultConfig.export_contour_line_width));
+  next.ring_color_stops = typeof next.ring_color_stops === 'string'
+    ? next.ring_color_stops
+    : defaultConfig.ring_color_stops;
+  next.ring_color_clip = Math.max(1e-6, toNumberOr(next.ring_color_clip, defaultConfig.ring_color_clip));
   next.export_fiber_irregularity_strength = Math.min(2, Math.max(0, toNumberOr(next.export_fiber_irregularity_strength, defaultConfig.export_fiber_irregularity_strength)));
   next.export_ring_irregularity_strength = Math.min(2, Math.max(0, toNumberOr(next.export_ring_irregularity_strength, defaultConfig.export_ring_irregularity_strength)));
   next.photorealistic_guidance_scale = Math.max(0, toNumberOr(next.photorealistic_guidance_scale, defaultConfig.photorealistic_guidance_scale));
@@ -481,6 +488,48 @@ function App() {
     loadCapabilities();
     return () => { isMounted = false; };
   }, []);
+
+  useEffect(() => {
+    const simId = String(simulationData?.simulation_id || '').trim();
+    if (!simId || !config.display_ring_color) return undefined;
+
+    let cancelled = false;
+    const timeoutId = window.setTimeout(async () => {
+      try {
+        const response = await axios.post(`${API_BASE_URL}/render/ring-color-overlays`, {
+          simulation_id: simId,
+          ring_color_stops: config.ring_color_stops,
+          ring_color_clip: Math.max(1e-6, Number(config.ring_color_clip) || 1.0),
+          show_rings_inside_knots: !!config.display_rings_inside_knots,
+          knot_inside_limit: Number(config.knot_inside_limit),
+          size: 512,
+        });
+        if (cancelled) return;
+        const overlays = response?.data?.ring_color_overlays || null;
+        setSimulationData((prev) => {
+          if (!prev || String(prev.simulation_id || '') !== simId) return prev;
+          return {
+            ...prev,
+            ring_color_overlays: overlays,
+          };
+        });
+      } catch (err) {
+        if (!cancelled) console.error(err);
+      }
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, [
+    simulationData?.simulation_id,
+    config.display_ring_color,
+    config.ring_color_stops,
+    config.ring_color_clip,
+    config.display_rings_inside_knots,
+    config.knot_inside_limit,
+  ]);
 
   const buildMatlabBundleRequest = (simId, options = {}) => ({
     simulation_id: simId,

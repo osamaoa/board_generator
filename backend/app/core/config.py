@@ -142,6 +142,9 @@ class BoardConfig(BaseModel):
     display_knot_axes: bool = False
     display_contours: bool = True
     display_surface_mesh: bool = False
+    display_ring_color: bool = False
+    ring_color_stops: str = ""
+    ring_color_clip: float = 1.0
     
     transparent: bool = True
     board_opacity: float = 0.8

@@ -127,6 +127,43 @@ const useBoardFaceOverlayGeometry = (boardOutline) => useMemo(() => {
     ];
 }, [boardOutline]);
 
+const useBoardCapOverlayGeometry = (boardOutline) => useMemo(() => {
+    const min = boardOutline?.min;
+    const max = boardOutline?.max;
+    if (!Array.isArray(min) || !Array.isArray(max) || min.length !== 3 || max.length !== 3) {
+        return [];
+    }
+
+    const [x0, y0, z0] = min;
+    const [x1, y1, z1] = max;
+    const maxDim = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), Math.abs(z1 - z0), 1e-6);
+    const eps = Math.max(0.04, 0.001 * maxDim);
+    const uv = new Float32Array([0, 0, 1, 0, 1, 1, 0, 1]);
+    const indices = new Uint16Array([0, 1, 2, 0, 2, 3]);
+    const mkFace = (key, verts) => ({
+        key,
+        positions: new Float32Array(verts.flat()),
+        uvs: uv,
+        indices,
+    });
+
+    return [
+        // y faces are the board/log end cross-sections in viewer coordinates.
+        mkFace('y_min', [
+            [x0, y0 - eps, z0],
+            [x1, y0 - eps, z0],
+            [x1, y0 - eps, z1],
+            [x0, y0 - eps, z1],
+        ]),
+        mkFace('y_max', [
+            [x0, y1 + eps, z0],
+            [x1, y1 + eps, z0],
+            [x1, y1 + eps, z1],
+            [x0, y1 + eps, z1],
+        ]),
+    ];
+}, [boardOutline]);
+
 const NormalFaceOverlays = ({ boardOutline, overlays, visible }) => {
     const faces = useBoardFaceOverlayGeometry(boardOutline);
     const texturesByFace = useMemo(() => {
@@ -232,6 +269,120 @@ const FiberOutOfPlaneFaceOverlays = ({ boardOutline, overlays, visible }) => {
                             polygonOffset
                             polygonOffsetFactor={-1.2}
                             polygonOffsetUnits={-1.2}
+                            toneMapped={false}
+                        />
+                    </mesh>
+                );
+            })}
+        </group>
+    );
+};
+
+const RingColorFaceOverlays = ({ boardOutline, overlays, visible }) => {
+    const faces = useBoardFaceOverlayGeometry(boardOutline);
+    const texturesByFace = useMemo(() => {
+        const loader = new THREE.TextureLoader();
+        const next = {};
+        for (const faceKey of ['x_min', 'x_max', 'z_min', 'z_max']) {
+            const source = typeof overlays?.[faceKey]?.src === 'string' ? overlays[faceKey].src.trim() : '';
+            if (!source) continue;
+            const tex = loader.load(source);
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.wrapS = THREE.ClampToEdgeWrapping;
+            tex.wrapT = THREE.ClampToEdgeWrapping;
+            tex.repeat.set(1, 1);
+            tex.offset.set(0, 0);
+            tex.needsUpdate = true;
+            next[faceKey] = tex;
+        }
+        return next;
+    }, [overlays]);
+
+    useEffect(() => () => {
+        Object.values(texturesByFace).forEach((tex) => tex.dispose());
+    }, [texturesByFace]);
+
+    if (!visible || faces.length === 0) return null;
+
+    return (
+        <group renderOrder={9}>
+            {faces.map((face) => {
+                const texture = texturesByFace[face.key];
+                if (!texture) return null;
+                return (
+                    <mesh key={`ring-color-overlay-${face.key}`} renderOrder={9}>
+                        <bufferGeometry>
+                            <bufferAttribute attach="attributes-position" args={[face.positions, 3]} />
+                            <bufferAttribute attach="attributes-uv" args={[face.uvs, 2]} />
+                            <bufferAttribute attach="index" args={[face.indices, 1]} />
+                        </bufferGeometry>
+                        <meshBasicMaterial
+                            map={texture}
+                            transparent
+                            opacity={1}
+                            side={THREE.FrontSide}
+                            depthTest
+                            depthWrite={false}
+                            polygonOffset
+                            polygonOffsetFactor={-1.4}
+                            polygonOffsetUnits={-1.4}
+                            toneMapped={false}
+                        />
+                    </mesh>
+                );
+            })}
+        </group>
+    );
+};
+
+const RingColorCapOverlays = ({ boardOutline, overlays, visible }) => {
+    const faces = useBoardCapOverlayGeometry(boardOutline);
+    const texturesByFace = useMemo(() => {
+        const loader = new THREE.TextureLoader();
+        const next = {};
+        for (const faceKey of ['y_min', 'y_max']) {
+            const source = typeof overlays?.[faceKey]?.src === 'string' ? overlays[faceKey].src.trim() : '';
+            if (!source) continue;
+            const tex = loader.load(source);
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.wrapS = THREE.ClampToEdgeWrapping;
+            tex.wrapT = THREE.ClampToEdgeWrapping;
+            tex.repeat.set(1, 1);
+            tex.offset.set(0, 0);
+            tex.needsUpdate = true;
+            next[faceKey] = tex;
+        }
+        return next;
+    }, [overlays]);
+
+    useEffect(() => () => {
+        Object.values(texturesByFace).forEach((tex) => tex.dispose());
+    }, [texturesByFace]);
+
+    if (!visible || faces.length === 0) return null;
+
+    return (
+        <group renderOrder={9}>
+            {faces.map((face) => {
+                const texture = texturesByFace[face.key];
+                if (!texture) return null;
+                return (
+                    <mesh key={`ring-color-cap-${face.key}`} renderOrder={9}>
+                        <bufferGeometry>
+                            <bufferAttribute attach="attributes-position" args={[face.positions, 3]} />
+                            <bufferAttribute attach="attributes-uv" args={[face.uvs, 2]} />
+                            <bufferAttribute attach="index" args={[face.indices, 1]} />
+                        </bufferGeometry>
+                        <meshBasicMaterial
+                            map={texture}
+                            transparent
+                            opacity={1}
+                            side={THREE.DoubleSide}
+                            depthTest
+                            depthWrite={false}
+                            polygonOffset
+                            polygonOffsetFactor={-1.4}
+                            polygonOffsetUnits={-1.4}
                             toneMapped={false}
                         />
                     </mesh>
@@ -1155,6 +1306,22 @@ const Viewer3D = ({
                                 boardOutline={data.board_outline}
                                 overlays={fiberOutOfPlaneOverlays}
                                 visible={!!showFiberOutOfPlaneOverlay}
+                            />
+                        )}
+
+                        {/* Initial ring-color field overlays */}
+                        {data && data.board_outline && (
+                            <RingColorFaceOverlays
+                                boardOutline={data.board_outline}
+                                overlays={data.ring_color_overlays}
+                                visible={!isLogMode && !!config.display_ring_color}
+                            />
+                        )}
+                        {data && data.board_outline && (
+                            <RingColorCapOverlays
+                                boardOutline={data.board_outline}
+                                overlays={data.ring_color_overlays}
+                                visible={!!config.display_ring_color}
                             />
                         )}
 

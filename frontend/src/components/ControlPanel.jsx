@@ -78,6 +78,63 @@ const normalizePositiveIntArray = (raw) => {
     return out;
 };
 const formatPositiveIntArray = (raw) => normalizePositiveIntArray(raw).join(', ');
+const defaultRingColorStops = [
+    { level: -0.5, color: '#f0bc8f' },
+    { level: 0.0, color: '#9c6331' },
+    { level: 0.5, color: '#f0bc8f' },
+];
+
+const normalizeHexColor = (raw, fallback = '#f0bc8f') => {
+    const text = String(raw || '').trim();
+    if (/^#[0-9a-f]{6}$/i.test(text)) return text.toLowerCase();
+    if (/^#[0-9a-f]{3}$/i.test(text)) {
+        return `#${text.slice(1).split('').map((ch) => ch + ch).join('')}`.toLowerCase();
+    }
+    return fallback;
+};
+
+const parseRingColorStops = (raw) => {
+    const parsed = [];
+    if (Array.isArray(raw)) {
+        for (const item of raw) {
+            const level = toNumber(item?.level ?? item?.value, NaN);
+            const color = normalizeHexColor(item?.color, '');
+            if (Number.isFinite(level) && color) parsed.push({ level, color });
+        }
+    } else {
+        const text = String(raw || '').trim();
+        for (const piece of text.split(';')) {
+            const token = piece.trim();
+            if (!token || !token.includes(':')) continue;
+            const [levelText, colorText] = token.split(':');
+            const level = toNumber(levelText, NaN);
+            const color = normalizeHexColor(colorText, '');
+            if (Number.isFinite(level) && color) parsed.push({ level, color });
+        }
+    }
+    const source = parsed.length >= 2 ? parsed : defaultRingColorStops;
+    return source
+        .map((stop) => ({
+            level: toNumber(stop.level, 0),
+            color: normalizeHexColor(stop.color),
+        }))
+        .sort((a, b) => a.level - b.level);
+};
+
+const formatRingColorStops = (stops) => stops
+    .map((stop) => `${Number(stop.level).toFixed(4).replace(/\.?0+$/, '')}:${normalizeHexColor(stop.color)}`)
+    .join(';');
+
+const interpolateHexColor = (a, b, alpha) => {
+    const ca = normalizeHexColor(a).slice(1);
+    const cb = normalizeHexColor(b).slice(1);
+    const next = [0, 2, 4].map((idx) => {
+        const va = parseInt(ca.slice(idx, idx + 2), 16);
+        const vb = parseInt(cb.slice(idx, idx + 2), 16);
+        return Math.round(va + (vb - va) * alpha).toString(16).padStart(2, '0');
+    });
+    return `#${next.join('')}`;
+};
 
 const ControlPanel = ({
     config,
@@ -171,6 +228,10 @@ const ControlPanel = ({
         () => formatPositiveIntArray(config.random_crook_extra_orders),
         [config.random_crook_extra_orders]
     );
+    const ringColorStops = useMemo(
+        () => parseRingColorStops(config.ring_color_stops),
+        [config.ring_color_stops]
+    );
 
     const manualKnots = useMemo(
         () => normalizeInputKnots(config),
@@ -240,6 +301,58 @@ const ControlPanel = ({
             nextConfig.photorealistic_include_knot_maps = false;
         }
         onConfigChange(nextConfig);
+    };
+
+    const saveRingColorStops = (stops) => {
+        const nextStops = parseRingColorStops(stops);
+        onConfigChange({
+            ...config,
+            ring_color_stops: formatRingColorStops(nextStops),
+        });
+    };
+
+    const updateRingColorStop = (index, key, rawValue) => {
+        const stops = ringColorStops.map((stop) => ({ ...stop }));
+        if (!stops[index]) return;
+        if (key === 'level') {
+            stops[index].level = toNumber(rawValue, stops[index].level);
+        } else if (key === 'color') {
+            stops[index].color = normalizeHexColor(rawValue, stops[index].color);
+        }
+        saveRingColorStops(stops);
+    };
+
+    const addRingColorStop = () => {
+        const stops = ringColorStops.map((stop) => ({ ...stop })).sort((a, b) => a.level - b.level);
+        if (stops.length < 2) {
+            saveRingColorStops(defaultRingColorStops);
+            return;
+        }
+        let insertAt = 1;
+        let bestGap = -Infinity;
+        for (let idx = 0; idx < stops.length - 1; idx += 1) {
+            const gap = stops[idx + 1].level - stops[idx].level;
+            if (gap > bestGap) {
+                bestGap = gap;
+                insertAt = idx + 1;
+            }
+        }
+        const left = stops[insertAt - 1];
+        const right = stops[insertAt];
+        stops.splice(insertAt, 0, {
+            level: 0.5 * (left.level + right.level),
+            color: interpolateHexColor(left.color, right.color, 0.5),
+        });
+        saveRingColorStops(stops);
+    };
+
+    const removeRingColorStop = (index) => {
+        if (ringColorStops.length <= 2) return;
+        saveRingColorStops(ringColorStops.filter((_, idx) => idx !== index));
+    };
+
+    const resetRingColorStops = () => {
+        saveRingColorStops(defaultRingColorStops);
     };
 
     const setKnotCount = (countRaw) => {
@@ -982,6 +1095,14 @@ const ControlPanel = ({
                                 <span>Display Contours</span>
                             </label>
                             <label className="toggle">
+                                <input
+                                    type="checkbox"
+                                    checked={!!config.display_ring_color}
+                                    onChange={(e) => handleChange('display_ring_color', e.target.checked, 'bool')}
+                                />
+                                <span>Initial Color Field</span>
+                            </label>
+                            <label className="toggle">
                                 <input type="checkbox" checked={!!config.display_surface_mesh} onChange={(e) => handleChange('display_surface_mesh', e.target.checked, 'bool')} />
                                 <span>Display Mesh (4 Surfaces)</span>
                             </label>
@@ -1086,7 +1207,7 @@ const ControlPanel = ({
                             </div>
                         </label>
 
-                        <div className="field-grid single">
+                        <div className="field-grid">
                             <label className="field">
                                 <span>Contour Line Width</span>
                                 <div className="range-row">
@@ -1094,6 +1215,52 @@ const ControlPanel = ({
                                     <strong>{toNumber(config.contour_line_width).toFixed(1)}</strong>
                                 </div>
                             </label>
+                            <label className="field">
+                                <span>Color Clip</span>
+                                <div className="range-row">
+                                    <input type="range" min={0.1} max={2.5} step={0.05} value={toNumber(config.ring_color_clip, 1.0)} onChange={(e) => handleChange('ring_color_clip', e.target.value, 'number')} />
+                                    <strong>{toNumber(config.ring_color_clip, 1.0).toFixed(2)}</strong>
+                                </div>
+                            </label>
+                        </div>
+
+                        <div className="ring-color-editor">
+                            <div className="ring-color-toolbar">
+                                <span>Color Stops</span>
+                                <button type="button" onClick={addRingColorStop}>Add Stop</button>
+                                <button type="button" onClick={resetRingColorStops}>Reset</button>
+                            </div>
+                            <div className="ring-color-stops">
+                                {ringColorStops.map((stop, index) => (
+                                    <div className="ring-color-stop-row" key={`ring-color-stop-${index}`}>
+                                        <label className="field compact">
+                                            <span>Level</span>
+                                            <input
+                                                type="number"
+                                                step={0.01}
+                                                value={stop.level}
+                                                onChange={(e) => updateRingColorStop(index, 'level', e.target.value)}
+                                            />
+                                        </label>
+                                        <label className="field compact color-field">
+                                            <span>Color</span>
+                                            <input
+                                                type="color"
+                                                value={stop.color}
+                                                onChange={(e) => updateRingColorStop(index, 'color', e.target.value)}
+                                            />
+                                        </label>
+                                        <button
+                                            type="button"
+                                            className="ring-color-remove"
+                                            disabled={ringColorStops.length <= 2}
+                                            onClick={() => removeRingColorStop(index)}
+                                        >
+                                            Remove
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
 
                         <div className="field-grid">

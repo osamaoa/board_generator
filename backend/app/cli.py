@@ -563,9 +563,24 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "Comma-separated outputs: rings, fibers, middle, top_bottom, photorealistic. "
+            "Comma-separated outputs: rings, ring_color, fibers, middle, top_bottom, photorealistic. "
             "Use 'all' for every output. Default: rings,fibers,middle,top_bottom."
         ),
+    )
+    generate.add_argument(
+        "--ring-color-stops",
+        type=str,
+        default=None,
+        help=(
+            "Semicolon-separated normalized contour color stops for ring_color output, "
+            "for example '-0.5:#f0bc8f;0:#9c6331;0.5:#f0bc8f'."
+        ),
+    )
+    generate.add_argument(
+        "--ring-color-clip",
+        type=float,
+        default=None,
+        help="Clip normalized nearest-ring scalar values to +/- this value for ring_color output (default: 1.0).",
     )
     generate.add_argument("--image-size", type=int, default=None, help="PNG resolution per side (default: 512).")
     generate.add_argument("--imid-start", type=int, default=None, help="Start index for output image filenames (default: 1).")
