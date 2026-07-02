@@ -83,10 +83,10 @@ _DEFAULT_RING_COLOR_STOPS = [
     (0.60, "#d8c8ae"),
 ]
 _DEFAULT_RING_COLOR_STOPS_TEXT = "-0.6:#d8c8ae;-0.08:#d3bea0;0:#cbae8c;0.08:#d3bea0;0.6:#d8c8ae"
-_DEFAULT_KNOT_STAIN_DARKNESS = 0.08
+_DEFAULT_KNOT_STAIN_DARKNESS = 0.40
 _DEFAULT_KNOT_STAIN_SPREAD_MM = 14.0
 _DEFAULT_KNOT_STAIN_COLOR = "#8f705b"
-_DEFAULT_KNOT_STAIN_OPACITY = 0.34
+_DEFAULT_KNOT_STAIN_OPACITY = 0.58
 _DEFAULT_VENEER_FIBER_TEXTURE_STRENGTH = 0.65
 _DEFAULT_VENEER_FIBER_TEXTURE_SCALE_MM = 0.70
 _DEFAULT_VENEER_FIBER_TEXTURE_LENGTH_MM = 80.0
@@ -575,6 +575,56 @@ def _apply_knot_stain_to_rgb(
     return np.rint(np.clip(out, 0.0, 1.0) * 255.0).astype(np.uint8)
 
 
+def _apply_knot_deviation_stain_to_rgb(
+    rgb: np.ndarray,
+    deviation_image: Optional[np.ndarray],
+    *,
+    strength: float = 0.0,
+    stain_color: Any = _DEFAULT_KNOT_STAIN_COLOR,
+    opacity: float = _DEFAULT_KNOT_STAIN_OPACITY,
+) -> np.ndarray:
+    s = float(strength)
+    alpha_scale = float(opacity)
+    if (
+        not np.isfinite(s)
+        or not np.isfinite(alpha_scale)
+        or s <= 0.0
+        or alpha_scale <= 0.0
+        or deviation_image is None
+    ):
+        return rgb
+
+    deviation = np.asarray(deviation_image, dtype=np.float32)
+    if deviation.shape != rgb.shape[:2]:
+        return rgb
+    finite = np.isfinite(deviation) & (deviation > 1e-6)
+    if not np.any(finite):
+        return rgb
+
+    positive = deviation[finite]
+    scale = float(np.percentile(positive, 96.0))
+    if not np.isfinite(scale) or scale <= 1e-6:
+        scale = float(np.max(positive))
+    if not np.isfinite(scale) or scale <= 1e-6:
+        return rgb
+
+    weight = np.zeros_like(deviation, dtype=np.float32)
+    normalized = np.clip(deviation[finite] / scale, 0.0, 1.35)
+    weight[finite] = 1.0 - np.exp(-2.2 * normalized)
+    weight = np.clip(weight, 0.0, 1.0)
+
+    strength_safe = float(np.clip(s, 0.0, 1.0))
+    opacity_safe = float(np.clip(alpha_scale, 0.0, 1.0))
+    base = np.asarray(rgb, dtype=np.float32) / 255.0
+    stain_rgb = _hex_to_rgb_float(stain_color).reshape(1, 1, 3)
+    target = np.clip(stain_rgb * (1.15 - 0.55 * strength_safe), 0.0, 1.0)
+    target = np.minimum(base[..., :3], target)
+    alpha = np.clip(weight * opacity_safe, 0.0, 1.0)
+    out = base.copy()
+    out[..., :3] = ((1.0 - alpha[..., None]) * base[..., :3]) + (alpha[..., None] * target)
+    return np.rint(np.clip(out, 0.0, 1.0) * 255.0).astype(np.uint8)
+
+
 def _render_color_matrix_png(
     matrix_uv: np.ndarray,
     *,
@@ -999,7 +1049,8 @@ def _evaluate_veneer_smooth_radial_fields(
     z_grid: np.ndarray,
     *,
     clip: float = 1.0,
-) -> Optional[np.ndarray]:
+    return_deviation: bool = False,
+) -> Optional[Any]:
     splines = list(getattr(knot_system, "splines", []) or [])
     if not splines:
         return None
@@ -1012,6 +1063,7 @@ def _evaluate_veneer_smooth_radial_fields(
 
         h, w = x_np.shape
         out = np.full((h, w), np.nan, dtype=np.float32)
+        out_deviation = np.full((h, w), np.nan, dtype=np.float32) if bool(return_deviation) else None
         max_points = 90_000
         chunk_cols = max(4, min(w, int(max_points / max(1, h))))
         n_knots = int(getattr(knot_system, "n_knots", 0) or 0)
@@ -1091,6 +1143,7 @@ def _evaluate_veneer_smooth_radial_fields(
                 radial_gate = _smooth_sigmoid_np(radial_coord / radial_gate_mm)
 
             fields: List[np.ndarray] = []
+            chunk_deviation = np.zeros_like(x_chunk, dtype=np.float32) if out_deviation is not None else None
             for spline in splines:
                 ro = np.asarray(spline(theta), dtype=np.float32) - taper
                 ro = np.maximum(ro, 1.0)
@@ -1110,6 +1163,8 @@ def _evaluate_veneer_smooth_radial_fields(
                     delta = np.where(np.isfinite(delta), delta, 0.0)
                     delta = np.minimum(delta, 0.6 * ro_e)
                     delta_combined = np.sqrt(np.sum(delta * delta, axis=-1))
+                    if chunk_deviation is not None:
+                        chunk_deviation = np.maximum(chunk_deviation, delta_combined.astype(np.float32, copy=False))
                     ro_eff = np.maximum(ro + delta_combined, 1.0)
                 else:
                     ro_eff = ro
@@ -1118,9 +1173,17 @@ def _evaluate_veneer_smooth_radial_fields(
             chunk_values = _ring_interval_phase_arrays(fields, clip=float(clip))
             if chunk_values.shape == x_chunk.shape:
                 out[:, c0:c1_idx] = chunk_values
+                if out_deviation is not None and chunk_deviation is not None:
+                    out_deviation[:, c0:c1_idx] = np.where(
+                        np.isfinite(chunk_values),
+                        chunk_deviation,
+                        np.nan,
+                    )
 
         if not np.any(np.isfinite(out)):
             return None
+        if out_deviation is not None:
+            return out.astype(np.float32, copy=False), out_deviation.astype(np.float32, copy=False)
         return out.astype(np.float32, copy=False)
     except Exception as exc:
         print(f"Veneer smooth radial field error: {exc}")
@@ -1460,42 +1523,6 @@ def _build_veneer_payload(
         y_grid = np.broadcast_to(y_curve[None, :], (width_samples, length_samples))
         z_grid = np.broadcast_to(z_vals[:, None], (width_samples, length_samples))
 
-        knot_sheet = None
-        if float(knot_darkness) > 0.0 and float(knot_opacity) > 0.0:
-            knot_sheet = _evaluate_veneer_knot_field(config, knot_system, x_grid, y_grid, z_grid)
-            if knot_sheet is None:
-                knot_field = layers_data.get("ttt_live")
-                if knot_field is None:
-                    knot_field = layers_data.get("ttt")
-                if knot_field is not None:
-                    knot_sheet = _sample_volume_on_xyz(knot_field, mesh, x_grid, y_grid, z_grid)
-
-        sheet_values = _evaluate_veneer_smooth_radial_fields(
-            config,
-            knot_system,
-            x_grid,
-            y_grid,
-            z_grid,
-            clip=float(clip),
-        )
-
-        if sheet_values is None:
-            sheet_values = _sample_volume_on_xyz(normalized, mesh, x_grid, y_grid, z_grid)
-        finite_sheet = np.isfinite(sheet_values)
-        if not np.any(finite_sheet):
-            return None
-
-        stops = _parse_ring_color_stops(color_stops)
-        image_arr = _colorize_normalized_ring_values(sheet_values, stops)
-        image_arr = _apply_knot_stain_to_rgb(
-            image_arr,
-            knot_sheet,
-            strength=float(knot_darkness),
-            spread_mm=float(knot_darkness_spread_mm),
-            stain_color=knot_stain_color,
-            opacity=float(knot_opacity),
-            knot_inside_limit=float(config.knot_inside_limit),
-        )
         fiber_texture_strength = float(
             getattr(config, "veneer_fiber_texture_strength", _DEFAULT_VENEER_FIBER_TEXTURE_STRENGTH)
             if getattr(config, "veneer_fiber_texture_strength", None) is not None
@@ -1508,6 +1535,51 @@ def _build_veneer_payload(
         fiber_texture_length_mm = float(
             getattr(config, "veneer_fiber_texture_length_mm", _DEFAULT_VENEER_FIBER_TEXTURE_LENGTH_MM)
             or _DEFAULT_VENEER_FIBER_TEXTURE_LENGTH_MM
+        )
+
+        knot_sheet = None
+        if (
+            (float(knot_darkness) > 0.0 and float(knot_opacity) > 0.0)
+            or float(fiber_texture_strength) > 0.0
+        ):
+            knot_sheet = _evaluate_veneer_knot_field(config, knot_system, x_grid, y_grid, z_grid)
+            if knot_sheet is None:
+                knot_field = layers_data.get("ttt_live")
+                if knot_field is None:
+                    knot_field = layers_data.get("ttt")
+                if knot_field is not None:
+                    knot_sheet = _sample_volume_on_xyz(knot_field, mesh, x_grid, y_grid, z_grid)
+
+        sheet_result = _evaluate_veneer_smooth_radial_fields(
+            config,
+            knot_system,
+            x_grid,
+            y_grid,
+            z_grid,
+            clip=float(clip),
+            return_deviation=True,
+        )
+        sheet_deviation = None
+        if isinstance(sheet_result, tuple) and len(sheet_result) >= 2:
+            sheet_values = sheet_result[0]
+            sheet_deviation = sheet_result[1]
+        else:
+            sheet_values = sheet_result
+
+        if sheet_values is None:
+            sheet_values = _sample_volume_on_xyz(normalized, mesh, x_grid, y_grid, z_grid)
+        finite_sheet = np.isfinite(sheet_values)
+        if not np.any(finite_sheet):
+            return None
+
+        stops = _parse_ring_color_stops(color_stops)
+        image_arr = _colorize_normalized_ring_values(sheet_values, stops)
+        image_arr = _apply_knot_deviation_stain_to_rgb(
+            image_arr,
+            sheet_deviation,
+            strength=float(knot_darkness),
+            stain_color=knot_stain_color,
+            opacity=float(knot_opacity),
         )
         image_arr = _apply_veneer_fiber_texture_to_rgb(
             image_arr,
@@ -1599,6 +1671,7 @@ def _build_veneer_payload(
                 "actual_length_mm": float(target_length),
                 "log_length_mm": float(log_length),
                 "turns": float(theta[-1] / (2.0 * math.pi)),
+                "knot_color_metric": "growth_layer_radial_deviation_mm",
                 "fiber_texture_strength": float(fiber_texture_strength),
                 "fiber_texture_scale_mm": float(fiber_texture_scale_mm),
                 "fiber_texture_length_mm": float(fiber_texture_length_mm),

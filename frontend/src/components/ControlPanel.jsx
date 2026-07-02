@@ -302,7 +302,7 @@ const ControlPanel = ({
             nextConfig.random_taper_max = Math.max(0, toNumber(nextConfig.random_taper_max, defaultRandomTaperMax));
         }
         if (key === 'ring_color_knot_darkness') {
-            nextConfig.ring_color_knot_darkness = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_darkness, 0.08)));
+            nextConfig.ring_color_knot_darkness = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_darkness, 0.40)));
         }
         if (key === 'ring_color_knot_spread_mm') {
             nextConfig.ring_color_knot_spread_mm = Math.max(1e-6, toNumber(nextConfig.ring_color_knot_spread_mm, 14.0));
@@ -311,7 +311,7 @@ const ControlPanel = ({
             nextConfig.ring_color_knot_stain_color = normalizeHexColor(nextConfig.ring_color_knot_stain_color, '#8f705b');
         }
         if (key === 'ring_color_knot_opacity') {
-            nextConfig.ring_color_knot_opacity = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_opacity, 0.34)));
+            nextConfig.ring_color_knot_opacity = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_opacity, 0.58)));
         }
         if (key === 'knot_generator_min_rd_minus_rl_mm') {
             nextConfig.knot_generator_min_rd_minus_rl_mm = Math.max(0, toNumber(nextConfig.knot_generator_min_rd_minus_rl_mm, 30.0));
@@ -1403,15 +1403,15 @@ const ControlPanel = ({
                                         <label className="field">
                                             <span>Darkness</span>
                                             <div className="range-row">
-                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_darkness, 0.08)} onChange={(e) => handleChange('ring_color_knot_darkness', e.target.value, 'number')} />
-                                                <strong>{toNumber(config.ring_color_knot_darkness, 0.08).toFixed(2)}</strong>
+                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_darkness, 0.40)} onChange={(e) => handleChange('ring_color_knot_darkness', e.target.value, 'number')} />
+                                                <strong>{toNumber(config.ring_color_knot_darkness, 0.40).toFixed(2)}</strong>
                                             </div>
                                         </label>
                                         <label className="field">
                                             <span>Opacity</span>
                                             <div className="range-row">
-                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_opacity, 0.34)} onChange={(e) => handleChange('ring_color_knot_opacity', e.target.value, 'number')} />
-                                                <strong>{toNumber(config.ring_color_knot_opacity, 0.34).toFixed(2)}</strong>
+                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_opacity, 0.58)} onChange={(e) => handleChange('ring_color_knot_opacity', e.target.value, 'number')} />
+                                                <strong>{toNumber(config.ring_color_knot_opacity, 0.58).toFixed(2)}</strong>
                                             </div>
                                         </label>
                                         <label className="field">

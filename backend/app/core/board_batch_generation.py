@@ -1286,7 +1286,7 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         1.0,
         max(
             0.0,
-            float(resolve("ring_color_knot_darkness", getattr(args, "ring_color_knot_darkness", None), 0.08)),
+            float(resolve("ring_color_knot_darkness", getattr(args, "ring_color_knot_darkness", None), 0.40)),
         ),
     )
     ring_color_knot_spread_mm = max(
@@ -1301,7 +1301,7 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         1.0,
         max(
             0.0,
-            float(resolve("ring_color_knot_opacity", getattr(args, "ring_color_knot_opacity", None), 0.34)),
+            float(resolve("ring_color_knot_opacity", getattr(args, "ring_color_knot_opacity", None), 0.58)),
         ),
     )
 
