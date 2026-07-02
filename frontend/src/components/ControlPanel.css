@@ -237,6 +237,32 @@
     padding: 8px;
 }
 
+.veneer-control-group {
+    border: 1px solid #b7c1ca;
+    border-radius: 5px;
+    background: #f7fbfe;
+    margin: 2px 0 10px 0;
+    padding: 8px;
+}
+
+.veneer-control-header {
+    display: flex;
+    align-items: center;
+    min-height: 20px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #d2dbe3;
+}
+
+.veneer-control-header span {
+    font-size: 0.67rem;
+    color: var(--ui-ink-2);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+    letter-spacing: 0.06em;
+    padding-bottom: 6px;
+}
+
 .color-control-header {
     display: flex;
     align-items: center;

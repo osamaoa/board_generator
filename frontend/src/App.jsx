@@ -8,6 +8,7 @@ const isDemoMode = ['1', 'true', 'yes', 'on'].includes(
   String(import.meta.env.VITE_BOARD_GENERATOR_DEMO || '').trim().toLowerCase()
 );
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8100' : '');
+const VENEER_INTERNAL_MESH_SIZE_MM = 20.0;
 const defaultPhotorealisticCapability = {
   available: false,
   reason: '',
@@ -115,6 +116,12 @@ export const defaultConfig = {
   ring_color_knot_spread_mm: 8.0,
   ring_color_knot_stain_color: '#3b2a1a',
   ring_color_knot_opacity: 1.0,
+  veneer_outer_radius_mm: 70.0,
+  veneer_inner_radius_mm: 20.0,
+  veneer_thickness_mm: 3.0,
+  veneer_length_mm: 0.0,
+  veneer_sheet_samples_length: 900,
+  veneer_sheet_samples_width: 260,
   display_board: true,
   board_opacity: 0.8,
   contour_line_width: 3.0,
@@ -258,6 +265,21 @@ export const normalizeLoadedConfig = (raw) => {
     ? next.ring_color_knot_stain_color
     : defaultConfig.ring_color_knot_stain_color;
   next.ring_color_knot_opacity = Math.min(1, Math.max(0, toNumberOr(next.ring_color_knot_opacity, defaultConfig.ring_color_knot_opacity)));
+  next.veneer_outer_radius_mm = Math.max(1e-6, toNumberOr(next.veneer_outer_radius_mm, defaultConfig.veneer_outer_radius_mm));
+  next.veneer_inner_radius_mm = Math.max(0, toNumberOr(next.veneer_inner_radius_mm, defaultConfig.veneer_inner_radius_mm));
+  next.veneer_thickness_mm = Math.max(1e-6, toNumberOr(next.veneer_thickness_mm, defaultConfig.veneer_thickness_mm));
+  next.veneer_length_mm = Math.max(0, toNumberOr(next.veneer_length_mm, defaultConfig.veneer_length_mm));
+  next.veneer_sheet_samples_length = Math.min(
+    2400,
+    Math.max(64, Math.floor(toNumberOr(next.veneer_sheet_samples_length, defaultConfig.veneer_sheet_samples_length)))
+  );
+  next.veneer_sheet_samples_width = Math.min(
+    1200,
+    Math.max(32, Math.floor(toNumberOr(next.veneer_sheet_samples_width, defaultConfig.veneer_sheet_samples_width)))
+  );
+  if (Number(next.board_or_log) === 2) {
+    next.display_contours = false;
+  }
   next.export_fiber_irregularity_strength = Math.min(2, Math.max(0, toNumberOr(next.export_fiber_irregularity_strength, defaultConfig.export_fiber_irregularity_strength)));
   next.export_ring_irregularity_strength = Math.min(2, Math.max(0, toNumberOr(next.export_ring_irregularity_strength, defaultConfig.export_ring_irregularity_strength)));
   next.photorealistic_guidance_scale = Math.max(0, toNumberOr(next.photorealistic_guidance_scale, defaultConfig.photorealistic_guidance_scale));
@@ -294,6 +316,16 @@ export const normalizeLoadedConfig = (raw) => {
 };
 
 const estimateSimulationDurationMs = (cfg) => {
+  if (Number(cfg.board_or_log) === 2) {
+    const pixels = Math.max(1, Number(cfg.veneer_sheet_samples_length) || 900)
+      * Math.max(1, Number(cfg.veneer_sheet_samples_width) || 260);
+    const baselinePixels = 900 * 260;
+    const gpuFactor = cfg.use_gpu ? 1.0 : 1.6;
+    let estimate = 1800 + Math.round((pixels / baselinePixels) * 6500 * gpuFactor);
+    if (cfg.display_knots) estimate += 700;
+    return Math.max(2800, Math.min(45000, Math.round(estimate)));
+  }
+
   const useDimensionMode = !!cfg.randomize_board_extents_from_dimensions;
   const lenX = useDimensionMode
     ? Math.max(1, Number(cfg.board_width) || 1)
@@ -323,6 +355,26 @@ const estimateSimulationDurationMs = (cfg) => {
 };
 
 const buildLoadingPlan = (cfg) => {
+  if (Number(cfg.board_or_log) === 2) {
+    const stages = [
+      { key: 'prep', label: 'Preparing veneer spiral and knot system', weight: 1.0 },
+      { key: 'veneer', label: 'Rendering veneer color sheet', weight: 4.0 },
+      { key: 'package', label: 'Packaging and transferring data', weight: 1.0 }
+    ];
+    const totalWeight = stages.reduce((sum, stage) => sum + stage.weight, 0) || 1;
+    let cumulative = 0;
+    const stageStarts = stages.map((stage) => {
+      const start = cumulative;
+      cumulative += (stage.weight / totalWeight) * 100;
+      return start;
+    });
+    return {
+      stages,
+      stageStarts,
+      estimateMs: estimateSimulationDurationMs(cfg)
+    };
+  }
+
   const stages = [
     { key: 'prep', label: 'Preparing mesh and knot system', weight: 1.0 },
     { key: 'growth', label: 'Computing growth layers', weight: 4.0 },
@@ -409,10 +461,17 @@ const buildKnotSequenceIndicator = (raw) => {
 };
 
 const applyLogModeVisualizationDefaults = (cfg) => {
-  if (!cfg || Number(cfg.board_or_log) !== 1) return cfg;
+  if (!cfg || Number(cfg.board_or_log) === 0) return cfg;
+  const veneerMode = Number(cfg.board_or_log) === 2;
   return {
     ...cfg,
     calc_fibers: false,
+    ...(veneerMode ? {
+      display_contours: false,
+      mesh_size_x_mm: VENEER_INTERNAL_MESH_SIZE_MM,
+      mesh_size_y_mm: VENEER_INTERNAL_MESH_SIZE_MM,
+      mesh_size_z_mm: VENEER_INTERNAL_MESH_SIZE_MM,
+    } : {}),
     quiver_or_stream: 0,
   };
 };
@@ -854,7 +913,9 @@ function App() {
   const photorealisticLoaded = !!photorealisticCapability.loaded;
   const photorealisticReason = String(photorealisticCapability.reason || '');
   const viewerConfig = applyLogModeVisualizationDefaults(config);
-  const isLogMode = Number(config.board_or_log) === 1;
+  const currentMode = Number(config.board_or_log);
+  const isLogMode = currentMode !== 0;
+  const isVeneerMode = currentMode === 2;
   const normalOverlayAvailable = !!(
     simulationData
     && simulationData.normal_overlays
@@ -995,7 +1056,7 @@ function App() {
           </div>
         )}
 
-        {simulationData && (
+        {simulationData && !isVeneerMode && (
           <div className={`viewer-status ${simulationData.gpu_active ? 'gpu-on' : 'gpu-off'}`}>
             GPU: {simulationData.gpu_active ? 'Active' : (simulationData.gpu_requested ? 'Requested, fallback to CPU' : 'Off')}
           </div>

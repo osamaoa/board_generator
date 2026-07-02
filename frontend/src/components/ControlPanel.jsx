@@ -259,6 +259,9 @@ const ControlPanel = ({
         if (type === 'bool') val = value;
 
         const nextConfig = { ...config, [key]: val };
+        if (key === 'board_or_log' && toInt(nextConfig.board_or_log, 0) === 2) {
+            nextConfig.display_contours = false;
+        }
         if (key === 'mesh_size_x_mm' || key === 'mesh_size_y_mm' || key === 'mesh_size_z_mm') {
             const sx = Math.max(0.05, toNumber(nextConfig.mesh_size_x_mm, toNumber(config.mesh_size_x_mm, 2.0)));
             const sy = Math.max(0.05, toNumber(nextConfig.mesh_size_y_mm, toNumber(config.mesh_size_y_mm, 2.0)));
@@ -277,6 +280,14 @@ const ControlPanel = ({
         }
         if (key === 'log_layer_stride') {
             nextConfig.log_layer_stride = Math.max(1, toInt(nextConfig.log_layer_stride, 5));
+        }
+        if (key.startsWith('veneer_')) {
+            nextConfig.veneer_outer_radius_mm = Math.max(1e-6, toNumber(nextConfig.veneer_outer_radius_mm, 70.0));
+            nextConfig.veneer_inner_radius_mm = Math.max(0, toNumber(nextConfig.veneer_inner_radius_mm, 20.0));
+            nextConfig.veneer_thickness_mm = Math.max(1e-6, toNumber(nextConfig.veneer_thickness_mm, 3.0));
+            nextConfig.veneer_length_mm = Math.max(0, toNumber(nextConfig.veneer_length_mm, 0.0));
+            nextConfig.veneer_sheet_samples_length = Math.min(2400, Math.max(64, toInt(nextConfig.veneer_sheet_samples_length, 900)));
+            nextConfig.veneer_sheet_samples_width = Math.min(1200, Math.max(32, toInt(nextConfig.veneer_sheet_samples_width, 260)));
         }
         if (key === 'random_crook_scale_max') {
             nextConfig.random_crook_scale_max = Math.max(0, toNumber(nextConfig.random_crook_scale_max, 1.0));
@@ -537,6 +548,7 @@ const ControlPanel = ({
                                 <select value={config.board_or_log} onChange={(e) => handleChange('board_or_log', e.target.value, 'int')}>
                                     <option value={0}>Board</option>
                                     <option value={1}>Log</option>
+                                    <option value={2}>Veneer</option>
                                 </select>
                             </label>
                         </div>
@@ -622,7 +634,7 @@ const ControlPanel = ({
                             </>
                         )}
 
-                        {toInt(config.board_or_log, 0) === 1 && (
+                        {toInt(config.board_or_log, 0) !== 0 && (
                             <>
                                 <div className="field-grid">
                                     <label className="field">
@@ -683,11 +695,85 @@ const ControlPanel = ({
                                     </label>
                                 </div>
                                 <p className="geometry-note">
-                                    Log mode board placement uses X/Y extents.
+                                    Log and veneer modes use X/Y extents.
                                     Z extent is set by `board_z_max - board_z_min` (Log Length).
                                     Growth-layer rendering uses every n-th layer (plus first and last).
                                 </p>
                             </>
+                        )}
+                        {toInt(config.board_or_log, 0) === 2 && (
+                            <div className="veneer-control-group">
+                                <div className="veneer-control-header">
+                                    <span>Veneer Spiral</span>
+                                </div>
+                                <div className="field-grid">
+                                    <label className="field">
+                                        <span>Outer Radius (mm)</span>
+                                        <input
+                                            type="number"
+                                            min={0.1}
+                                            step="0.5"
+                                            value={toNumber(config.veneer_outer_radius_mm, 70.0)}
+                                            onChange={(e) => handleChange('veneer_outer_radius_mm', e.target.value, 'number')}
+                                        />
+                                    </label>
+                                    <label className="field">
+                                        <span>Inner Radius (mm)</span>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            step="0.5"
+                                            value={toNumber(config.veneer_inner_radius_mm, 20.0)}
+                                            onChange={(e) => handleChange('veneer_inner_radius_mm', e.target.value, 'number')}
+                                        />
+                                    </label>
+                                    <label className="field">
+                                        <span>Thickness (mm)</span>
+                                        <input
+                                            type="number"
+                                            min={0.1}
+                                            step="0.1"
+                                            value={toNumber(config.veneer_thickness_mm, 3.0)}
+                                            onChange={(e) => handleChange('veneer_thickness_mm', e.target.value, 'number')}
+                                        />
+                                    </label>
+                                    <label className="field">
+                                        <span>Target Length (mm)</span>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            step="10"
+                                            value={toNumber(config.veneer_length_mm, 0.0)}
+                                            onChange={(e) => handleChange('veneer_length_mm', e.target.value, 'number')}
+                                        />
+                                    </label>
+                                    <label className="field">
+                                        <span>Sheet Length Samples</span>
+                                        <input
+                                            type="number"
+                                            min={64}
+                                            max={2400}
+                                            step={1}
+                                            value={toInt(config.veneer_sheet_samples_length, 900)}
+                                            onChange={(e) => handleChange('veneer_sheet_samples_length', e.target.value, 'int')}
+                                        />
+                                    </label>
+                                    <label className="field">
+                                        <span>Sheet Width Samples</span>
+                                        <input
+                                            type="number"
+                                            min={32}
+                                            max={1200}
+                                            step={1}
+                                            value={toInt(config.veneer_sheet_samples_width, 260)}
+                                            onChange={(e) => handleChange('veneer_sheet_samples_width', e.target.value, 'int')}
+                                        />
+                                    </label>
+                                </div>
+                                <p className="geometry-note">
+                                    Target Length 0 uses the full spiral until the inner radius.
+                                </p>
+                            </div>
                         )}
                         <label className="toggle">
                             <input
@@ -864,23 +950,31 @@ const ControlPanel = ({
                 {activeSection === 'simulation' && (
                     <section className="panel-section">
                         <h3>Simulation</h3>
-                        <p className="section-copy">Define per-axis element size in mm, deterministic seed, and compute mode.</p>
-                        <div className="field-grid">
-                            <label className="field">
-                                <span>Element Size X (mm)</span>
-                                <input type="number" min={0.05} step={0.05} value={toNumber(config.mesh_size_x_mm, 2.0)} onChange={(e) => handleChange('mesh_size_x_mm', e.target.value, 'number')} />
-                            </label>
-                            <label className="field">
-                                <span>Element Size Y (mm)</span>
-                                <input type="number" min={0.05} step={0.05} value={toNumber(config.mesh_size_y_mm, 2.0)} onChange={(e) => handleChange('mesh_size_y_mm', e.target.value, 'number')} />
-                            </label>
-                        </div>
-                        <div className="field-grid single">
-                            <label className="field">
-                                <span>Element Size Z (mm)</span>
-                                <input type="number" min={0.05} step={0.05} value={toNumber(config.mesh_size_z_mm, 2.0)} onChange={(e) => handleChange('mesh_size_z_mm', e.target.value, 'number')} />
-                            </label>
-                        </div>
+                        <p className="section-copy">
+                            {toInt(config.board_or_log, 0) === 2
+                                ? 'Set deterministic seed and compute mode. Veneer color resolution is controlled by sheet samples.'
+                                : 'Define per-axis element size in mm, deterministic seed, and compute mode.'}
+                        </p>
+                        {toInt(config.board_or_log, 0) !== 2 && (
+                            <>
+                                <div className="field-grid">
+                                    <label className="field">
+                                        <span>Element Size X (mm)</span>
+                                        <input type="number" min={0.05} step={0.05} value={toNumber(config.mesh_size_x_mm, 2.0)} onChange={(e) => handleChange('mesh_size_x_mm', e.target.value, 'number')} />
+                                    </label>
+                                    <label className="field">
+                                        <span>Element Size Y (mm)</span>
+                                        <input type="number" min={0.05} step={0.05} value={toNumber(config.mesh_size_y_mm, 2.0)} onChange={(e) => handleChange('mesh_size_y_mm', e.target.value, 'number')} />
+                                    </label>
+                                </div>
+                                <div className="field-grid single">
+                                    <label className="field">
+                                        <span>Element Size Z (mm)</span>
+                                        <input type="number" min={0.05} step={0.05} value={toNumber(config.mesh_size_z_mm, 2.0)} onChange={(e) => handleChange('mesh_size_z_mm', e.target.value, 'number')} />
+                                    </label>
+                                </div>
+                            </>
+                        )}
 
                         <label className="toggle">
                             <input type="checkbox" checked={config.use_seed} onChange={(e) => handleChange('use_seed', e.target.checked, 'bool')} />
@@ -1098,14 +1192,16 @@ const ControlPanel = ({
                         )}
 
                         <div className="toggle-grid">
-                            <label className="toggle">
-                                <input
-                                    type="checkbox"
-                                    checked={!!config.display_contours}
-                                    onChange={(e) => handleChange('display_contours', e.target.checked, 'bool')}
-                                />
-                                <span>Display Contours</span>
-                            </label>
+                            {toInt(config.board_or_log, 0) !== 2 && (
+                                <label className="toggle">
+                                    <input
+                                        type="checkbox"
+                                        checked={!!config.display_contours}
+                                        onChange={(e) => handleChange('display_contours', e.target.checked, 'bool')}
+                                    />
+                                    <span>Display Contours</span>
+                                </label>
+                            )}
                             <label className="toggle">
                                 <input
                                     type="checkbox"

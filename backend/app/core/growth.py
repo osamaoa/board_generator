@@ -276,7 +276,7 @@ class GrowthSimulator:
         # (layer i must stay inside layer i+1 => g_i >= g_{i+1} pointwise).
         # Apply this in both board and log modes so live-knot bumps do not
         # protrude through later dead-knot growth layers.
-        enforce_dead_nesting = bool(getattr(p, "dead_knots", False))
+        enforce_dead_nesting = bool(getattr(p, "dead_knots", False) and p.board_or_log != 2)
         stored_layers = []
         pending_idx = None
         pending_g = None
@@ -297,6 +297,8 @@ class GrowthSimulator:
             
             flags_iter = flags.copy()
             flags_iter['get_knots'] = False
+            if p.board_or_log == 2:
+                flags_iter['dead_knots'] = False
 
             g, _ = k.calculate_influence(X, Y, Z, Ro, Ri0, flags_iter)
             
