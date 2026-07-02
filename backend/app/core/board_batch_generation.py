@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 
-from app.core.array_backend import seed_all
+from app.core.array_backend import seed_all, to_numpy
 from app.core.config import BoardConfig
 from app.core.fiber import FiberSolver
 from app.core.growth import GrowthSimulator
@@ -29,6 +29,7 @@ from app.main import (
     _apply_ring_irregularity_bytes,
     _board_fit_warnings,
     _build_fiber_surface_pngs,
+    _build_growth_color_surface_pngs,
     _build_matlab_mid_ring_png,
     _build_matlab_ring_pngs,
     _evaluate_outer_radius,
@@ -37,7 +38,7 @@ from app.main import (
 )
 
 
-_ALLOWED_OUTPUTS = {"rings", "fibers", "middle", "top_bottom", "photorealistic"}
+_ALLOWED_OUTPUTS = {"rings", "ring_color", "fibers", "middle", "top_bottom", "photorealistic"}
 _IMG_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp")
 _EXTENT_KEYS = (
     "board_x_min",
@@ -120,6 +121,13 @@ _RELEVANT_CONFIG_KEYS = {
     "rand_fibers",
     "out_of_plane_threshold",
     "snr",
+    # Ring-color rendering controls
+    "ring_color_stops",
+    "ring_color_clip",
+    "ring_color_knot_darkness",
+    "ring_color_knot_spread_mm",
+    "ring_color_knot_stain_color",
+    "ring_color_knot_opacity",
 }
 
 
@@ -494,6 +502,12 @@ def _parse_outputs(raw: str) -> Set[str]:
         "rings": "rings",
         "rings4": "rings",
         "ring4": "rings",
+        "ring_color": "ring_color",
+        "ring-colors": "ring_color",
+        "ring_colors": "ring_color",
+        "colored_rings": "ring_color",
+        "color_rings": "ring_color",
+        "colors": "ring_color",
         "fibers": "fibers",
         "fibers4": "fibers",
         "fiber4": "fibers",
@@ -519,7 +533,7 @@ def _parse_outputs(raw: str) -> Set[str]:
         if mapped is None:
             raise RuntimeError(
                 "Unsupported output token "
-                f"'{token}'. Allowed: rings, fibers, middle, top_bottom, photorealistic, all."
+                f"'{token}'. Allowed: rings, ring_color, fibers, middle, top_bottom, photorealistic, all."
             )
         out.add(mapped)
     unknown = out - _ALLOWED_OUTPUTS
@@ -1259,6 +1273,33 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         maximum=2.0,
     )
     show_inside = _as_bool(resolve("show_rings_inside_knots", args.show_rings_inside_knots, False))
+    ring_color_stops = resolve("ring_color_stops", getattr(args, "ring_color_stops", None), None)
+    ring_color_clip = max(
+        1e-6,
+        float(resolve("ring_color_clip", getattr(args, "ring_color_clip", None), 1.0)),
+    )
+    ring_color_knot_darkness = min(
+        1.0,
+        max(
+            0.0,
+            float(resolve("ring_color_knot_darkness", getattr(args, "ring_color_knot_darkness", None), 0.50)),
+        ),
+    )
+    ring_color_knot_spread_mm = max(
+        1e-6,
+        float(resolve("ring_color_knot_spread_mm", getattr(args, "ring_color_knot_spread_mm", None), 8.0)),
+    )
+    ring_color_knot_stain_color = str(
+        resolve("ring_color_knot_stain_color", getattr(args, "ring_color_knot_stain_color", None), "#3b2a1a")
+        or "#3b2a1a"
+    )
+    ring_color_knot_opacity = min(
+        1.0,
+        max(
+            0.0,
+            float(resolve("ring_color_knot_opacity", getattr(args, "ring_color_knot_opacity", None), 1.0)),
+        ),
+    )
 
     photo_steps = resolve("photorealistic_ddim_steps", args.photorealistic_ddim_steps, None)
     photo_guidance_spec = _parse_float_or_range_arg(
@@ -1384,6 +1425,16 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         f"min_knot_count={min_knot_count}, "
         f"placement_mode={placement_policy.mode}"
     )
+    if "ring_color" in outputs:
+        print(
+            "[board-cli] normalized ring-color surfaces enabled: "
+            f"clip=+/-{ring_color_clip:.6g}; "
+            f"knot_darkness={ring_color_knot_darkness:.3g}; "
+            f"knot_spread={ring_color_knot_spread_mm:.3g} mm; "
+            f"knot_opacity={ring_color_knot_opacity:.3g}; "
+            f"knot_stain={ring_color_knot_stain_color}; "
+            "using nearest growth-layer scalar field normalized by local adjacent-ring spacing."
+        )
     if placement_policy.mode == "dimensions":
         print(
             "[board-cli] dimension mode: random board placement per attempt "
@@ -1600,8 +1651,10 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         )
 
         rings_need = bool(outputs & {"rings", "middle", "top_bottom", "photorealistic"})
+        ring_color_need = bool("ring_color" in outputs)
         fibers_need = bool(("fibers" in outputs) or ("photorealistic" in outputs and not bool(photo_use_rings_only)))
         ring_pngs: Dict[str, bytes] = {}
+        ring_color_pngs: Dict[str, bytes] = {}
         fiber_pngs: Dict[str, bytes] = {}
         if rings_need:
             if not contours_main:
@@ -1662,6 +1715,41 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
                 )
                 ring_pngs.update(top_bottom_pngs)
 
+        if ring_color_need:
+            knot_mask = None
+            knot_field = layers_data.get("ttt_live")
+            if knot_field is None:
+                knot_field = layers_data.get("ttt")
+            if not bool(show_inside):
+                if knot_field is not None:
+                    try:
+                        knot_arr = np.asarray(to_numpy(knot_field), dtype=np.float32)
+                        knot_mask = knot_arr <= float(cfg.knot_inside_limit)
+                    except Exception:
+                        knot_mask = None
+            ring_color_pngs = _build_growth_color_surface_pngs(
+                layers_data.get("growth_layer_fields") or [],
+                size=image_size,
+                color_stops=ring_color_stops,
+                clip=float(ring_color_clip),
+                knot_mask=knot_mask,
+                knot_field=knot_field,
+                knot_inside_limit=float(cfg.knot_inside_limit),
+                knot_darkness=float(ring_color_knot_darkness),
+                knot_darkness_spread_mm=float(ring_color_knot_spread_mm),
+                knot_stain_color=ring_color_knot_stain_color,
+                knot_opacity=float(ring_color_knot_opacity),
+            )
+            missing = [key for key in ("ring_color_1", "ring_color_2", "ring_color_3", "ring_color_4") if key not in ring_color_pngs]
+            if missing:
+                rejected_outside_log += 1
+                if (rejected_outside_log % 25) == 0:
+                    print(
+                        f"[board-cli] rejected_outside_log={rejected_outside_log} "
+                        f"(attempt={attempt + 1}/{max_attempts})"
+                    )
+                continue
+
         if fibers_need:
             txx, tyy, tzz = FiberSolver.solve(
                 cfg,
@@ -1710,11 +1798,21 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         if "rings" in outputs:
             for folder in ["rings_1", "rings_2", "rings_3", "rings_4"]:
                 _write_png(root / folder / filename, ring_pngs[folder])
+        if "ring_color" in outputs:
+            for folder in ["ring_color_1", "ring_color_2", "ring_color_3", "ring_color_4"]:
+                _write_png(root / folder / filename, ring_color_pngs[folder])
         if "middle" in outputs:
             _write_png(root / "rings_5" / filename, ring_pngs["rings_5"])
+            if "ring_color" in outputs and "ring_color_5" in ring_color_pngs:
+                _write_png(root / "ring_color_5" / filename, ring_color_pngs["ring_color_5"])
         if "top_bottom" in outputs:
             _write_png(root / "rings_top" / filename, ring_pngs["rings_top"])
             _write_png(root / "rings_bottom" / filename, ring_pngs["rings_bottom"])
+            if "ring_color" in outputs:
+                if "ring_color_top" in ring_color_pngs:
+                    _write_png(root / "ring_color_top" / filename, ring_color_pngs["ring_color_top"])
+                if "ring_color_bottom" in ring_color_pngs:
+                    _write_png(root / "ring_color_bottom" / filename, ring_color_pngs["ring_color_bottom"])
         if "fibers" in outputs:
             for folder in ["fiber_1", "fiber_2", "fiber_3", "fiber_4"]:
                 _write_png(root / folder / filename, fiber_pngs[folder])
@@ -1852,8 +1950,11 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
             "outputs_requested": sorted(outputs),
             "outputs_saved": {
                 "rings_1_to_4": bool("rings" in outputs),
+                "ring_color_1_to_4": bool("ring_color" in outputs),
                 "rings_5_middle": bool("middle" in outputs),
+                "ring_color_5_middle": bool("ring_color" in outputs and "middle" in outputs),
                 "rings_top_bottom": bool("top_bottom" in outputs),
+                "ring_color_top_bottom": bool("ring_color" in outputs and "top_bottom" in outputs),
                 "fibers_1_to_4": bool("fibers" in outputs),
                 "photorealistic_1_to_4": False,
             },
@@ -1977,6 +2078,16 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         "image_size": image_size,
         "contour_line_width": _serialize_range_spec(contour_line_width_spec),
         "contour_blur_sigma": contour_blur_sigma,
+        "ring_color": {
+            "enabled": bool("ring_color" in outputs),
+            "stops": ring_color_stops,
+            "clip": float(ring_color_clip),
+            "knot_darkness": float(ring_color_knot_darkness),
+            "knot_spread_mm": float(ring_color_knot_spread_mm),
+            "knot_stain_color": ring_color_knot_stain_color,
+            "knot_opacity": float(ring_color_knot_opacity),
+            "normalization": "nearest growth-layer scalar divided by local adjacent-layer scalar spacing",
+        },
         "fiber_blur_sigma": _serialize_range_spec(fiber_blur_spec),
         "fiber_irregularity_strength": _serialize_range_spec(fiber_irregularity_spec),
         "ring_irregularity_strength": _serialize_range_spec(ring_irregularity_spec),

@@ -173,6 +173,7 @@
 }
 
 .field input[type="number"],
+.field input[type="text"],
 .field select {
     width: 100%;
     border: 1px solid #9ba8b3;
@@ -192,7 +193,18 @@
     text-align: right;
 }
 
+.field input[type="color"] {
+    width: 100%;
+    height: 32px;
+    border: 1px solid #9ba8b3;
+    border-radius: 4px;
+    background: #ffffff;
+    padding: 3px;
+    cursor: pointer;
+}
+
 .field input[type="number"]:focus,
+.field input[type="text"]:focus,
 .field select:focus {
     border-color: var(--ui-accent);
     box-shadow: 0 0 0 2px rgba(11, 99, 217, 0.2);
@@ -217,6 +229,116 @@
     color: var(--ui-ink-1);
 }
 
+.color-control-group {
+    border: 1px solid #b7c1ca;
+    border-radius: 5px;
+    background: #f7fbfe;
+    margin: 2px 0 8px 0;
+    padding: 8px;
+}
+
+.color-control-header {
+    display: flex;
+    align-items: center;
+    min-height: 20px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #d2dbe3;
+}
+
+.color-control-header span {
+    font-size: 0.67rem;
+    color: var(--ui-ink-2);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+    letter-spacing: 0.06em;
+    padding-bottom: 6px;
+}
+
+.knot-stain-layout {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 8px;
+}
+
+.knot-color-field {
+    grid-row: span 3;
+}
+
+.knot-color-field input[type="color"] {
+    height: 100%;
+    min-height: 104px;
+}
+
+.ring-color-editor {
+    border: 1px solid #b7c1ca;
+    border-radius: 5px;
+    background: #f3f8fc;
+    margin: 0;
+    padding: 8px;
+}
+
+.ring-color-toolbar {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 7px;
+}
+
+.ring-color-toolbar span {
+    margin-right: auto;
+    font-size: 0.67rem;
+    color: var(--ui-ink-2);
+    font-weight: 700;
+    text-transform: uppercase;
+    font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+    letter-spacing: 0.06em;
+}
+
+.ring-color-toolbar button,
+.ring-color-remove {
+    border: 1px solid #8ea0af;
+    border-radius: 4px;
+    background: #ffffff;
+    color: #17314a;
+    font-size: 0.64rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+    letter-spacing: 0.05em;
+    padding: 6px 7px;
+    cursor: pointer;
+}
+
+.ring-color-toolbar button:hover,
+.ring-color-remove:hover {
+    border-color: #657583;
+    background: #f2f7fb;
+}
+
+.ring-color-remove:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.ring-color-stops {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.ring-color-stop-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 54px auto;
+    align-items: end;
+    gap: 6px;
+}
+
+.field.compact {
+    gap: 3px;
+}
+
 .toggle-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -239,10 +361,13 @@
     width: 15px;
     height: 15px;
     accent-color: var(--ui-accent);
+    flex: 0 0 auto;
 }
 
 .toggle span {
+    min-width: 0;
     font-size: 0.72rem;
+    line-height: 1.25;
     font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;
     font-weight: 600;
     color: #18314a;
@@ -464,8 +589,17 @@
 @media (max-width: 740px) {
     .field-grid,
     .toggle-grid,
-    .knot-layout {
+    .knot-layout,
+    .knot-stain-layout {
         grid-template-columns: 1fr;
+    }
+
+    .knot-color-field {
+        grid-row: auto;
+    }
+
+    .knot-color-field input[type="color"] {
+        min-height: 32px;
     }
 
     .knot-list {

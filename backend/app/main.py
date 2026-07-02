@@ -73,6 +73,11 @@ _DEFAULT_FIBER_IRREGULARITY_STRENGTH = 0.35
 _DEFAULT_RING_IRREGULARITY_STRENGTH = 0.40
 _DEMO_MODE = str(os.environ.get("BOARD_GENERATOR_DEMO", "")).strip().lower() in {"1", "true", "yes", "on"}
 _PHOTOREALISTIC_DISABLED_REASON = "Photorealistic generation is disabled for this CPU demo."
+_DEFAULT_RING_COLOR_STOPS = [
+    (-0.50, "#f0bc8f"),
+    (0.00, "#9c6331"),
+    (0.50, "#f0bc8f"),
+]
 
 
 def _frontend_dist_dir() -> Path:
@@ -151,8 +156,28 @@ class ExportPhotorealisticRequest(BaseModel):
     include_base64: Optional[bool] = None
 
 
+class RenderRingColorOverlaysRequest(BaseModel):
+    simulation_id: str
+    ring_color_stops: Optional[Any] = None
+    ring_color_clip: Optional[float] = None
+    ring_color_knot_darkness: Optional[float] = None
+    ring_color_knot_spread_mm: Optional[float] = None
+    ring_color_knot_stain_color: Optional[str] = None
+    ring_color_knot_opacity: Optional[float] = None
+    show_rings_inside_knots: Optional[bool] = None
+    knot_inside_limit: Optional[float] = None
+    size: Optional[int] = None
+
+
 def _clamp01(value):
     return np.clip(value, 0.0, 1.0)
+
+
+def _pil_bilinear() -> int:
+    try:
+        return int(Image.Resampling.BILINEAR)
+    except AttributeError:
+        return int(Image.BILINEAR)
 
 
 def _surface_meta(board_outline: Dict[str, List[float]]) -> Dict[str, Dict[str, Any]]:
@@ -275,6 +300,548 @@ def _render_surface_png_matlab(
     png_buffer = BytesIO()
     image.save(png_buffer, format="PNG", optimize=False)
     return png_buffer.getvalue()
+
+
+def _hex_to_rgb_float(value: Any) -> np.ndarray:
+    text = str(value or "").strip()
+    if text.startswith("#"):
+        text = text[1:]
+    if len(text) == 3:
+        text = "".join(ch * 2 for ch in text)
+    if len(text) != 6:
+        raise ValueError(f"Invalid hex color: {value!r}")
+    try:
+        rgb = [int(text[idx : idx + 2], 16) for idx in (0, 2, 4)]
+    except ValueError as exc:
+        raise ValueError(f"Invalid hex color: {value!r}") from exc
+    return np.asarray(rgb, dtype=np.float32) / 255.0
+
+
+def _parse_ring_color_stops(raw: Any = None) -> List[Tuple[float, np.ndarray]]:
+    if raw is None or raw == "":
+        items = list(_DEFAULT_RING_COLOR_STOPS)
+    elif isinstance(raw, str):
+        items = []
+        for piece in raw.split(";"):
+            token = piece.strip()
+            if not token:
+                continue
+            if ":" not in token:
+                raise ValueError(
+                    "ring_color_stops string entries must be level:#rrggbb separated by semicolons."
+                )
+            level_text, color_text = token.split(":", 1)
+            items.append((float(level_text.strip()), color_text.strip()))
+    elif isinstance(raw, (list, tuple)):
+        items = []
+        for idx, item in enumerate(raw):
+            if isinstance(item, dict):
+                level = item.get("level", item.get("value"))
+                color = item.get("color")
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                level, color = item[0], item[1]
+            else:
+                raise ValueError(f"Invalid ring color stop at index {idx}: {item!r}")
+            items.append((float(level), color))
+    else:
+        raise ValueError("ring_color_stops must be a string or a list.")
+
+    parsed = [(float(level), _hex_to_rgb_float(color)) for level, color in items]
+    parsed = sorted(
+        [(level, color) for level, color in parsed if np.isfinite(level)],
+        key=lambda item: item[0],
+    )
+    if len(parsed) < 2:
+        raise ValueError("At least two ring color stops are required.")
+    unique: List[Tuple[float, np.ndarray]] = []
+    for level, color in parsed:
+        if unique and level <= unique[-1][0]:
+            level = unique[-1][0] + 1e-6
+        unique.append((level, color))
+    return unique
+
+
+def _nearest_ring_normalized_field(
+    growth_layer_fields: Any,
+    *,
+    clip: float = 1.0,
+) -> np.ndarray:
+    fields: List[np.ndarray] = []
+    shape: Optional[Tuple[int, int, int]] = None
+
+    if isinstance(growth_layer_fields, list):
+        raw_fields = growth_layer_fields
+    else:
+        try:
+            stacked = np.asarray(to_numpy(growth_layer_fields), dtype=np.float32)
+        except Exception:
+            stacked = np.empty((0,), dtype=np.float32)
+        if stacked.ndim == 4:
+            raw_fields = [stacked[..., idx] for idx in range(stacked.shape[-1])]
+        elif stacked.ndim == 3:
+            raw_fields = [stacked]
+        else:
+            raw_fields = []
+
+    if not raw_fields:
+        return np.empty((0, 0, 0), dtype=np.float32)
+
+    for field in raw_fields:
+        arr = np.asarray(to_numpy(field), dtype=np.float32)
+        if arr.ndim != 3:
+            continue
+        arr_shape = tuple(int(v) for v in arr.shape)
+        if shape is None:
+            shape = arr_shape
+        if arr_shape == shape:
+            fields.append(arr)
+    if not fields:
+        return np.empty((0, 0, 0), dtype=np.float32)
+
+    stack = np.stack(fields, axis=-1).astype(np.float32, copy=False)
+    finite = np.isfinite(stack)
+    abs_stack = np.where(finite, np.abs(stack), np.inf)
+    nearest_idx = np.argmin(abs_stack, axis=-1)
+    has_value = np.isfinite(np.min(abs_stack, axis=-1))
+    nearest = np.take_along_axis(stack, nearest_idx[..., None], axis=-1)[..., 0]
+
+    n_layers = int(stack.shape[-1])
+    if n_layers >= 2:
+        prev_idx = np.maximum(nearest_idx - 1, 0)
+        next_idx = np.minimum(nearest_idx + 1, n_layers - 1)
+        prev_val = np.take_along_axis(stack, prev_idx[..., None], axis=-1)[..., 0]
+        next_val = np.take_along_axis(stack, next_idx[..., None], axis=-1)[..., 0]
+        prev_spacing = np.where(nearest_idx > 0, np.abs(nearest - prev_val), np.nan)
+        next_spacing = np.where(nearest_idx < (n_layers - 1), np.abs(next_val - nearest), np.nan)
+        spacing = np.nanmin(np.stack([prev_spacing, next_spacing], axis=0), axis=0)
+        finite_spacing = spacing[np.isfinite(spacing) & (spacing > 1e-9)]
+        fallback = float(np.median(finite_spacing)) if finite_spacing.size else 1.0
+        spacing = np.where(np.isfinite(spacing) & (spacing > 1e-9), spacing, fallback)
+    else:
+        finite_abs = np.abs(nearest[np.isfinite(nearest)])
+        spacing = float(np.percentile(finite_abs, 95)) if finite_abs.size else 1.0
+        if not np.isfinite(spacing) or spacing <= 1e-9:
+            spacing = 1.0
+
+    normalized = nearest / np.maximum(spacing, 1e-9)
+    clip_value = max(1e-6, float(clip))
+    normalized = np.clip(normalized, -clip_value, clip_value)
+    normalized = np.where(has_value & np.isfinite(normalized), normalized, np.nan)
+    return normalized.astype(np.float32, copy=False)
+
+
+def _colorize_normalized_ring_values(values: np.ndarray, stops: List[Tuple[float, np.ndarray]]) -> np.ndarray:
+    vals = np.asarray(values, dtype=np.float32)
+    levels = np.asarray([level for level, _ in stops], dtype=np.float32)
+    colors = np.stack([color for _, color in stops], axis=0).astype(np.float32)
+    flat = vals.reshape(-1)
+    out = np.ones((flat.size, 3), dtype=np.float32)
+    finite = np.isfinite(flat)
+    if np.any(finite):
+        clipped = np.clip(flat[finite], float(levels[0]), float(levels[-1]))
+        for channel in range(3):
+            out[finite, channel] = np.interp(clipped, levels, colors[:, channel])
+    return np.rint(np.clip(out.reshape(vals.shape + (3,)), 0.0, 1.0) * 255.0).astype(np.uint8)
+
+
+def _apply_knot_stain_to_rgb(
+    rgb: np.ndarray,
+    knot_field_image: Optional[np.ndarray],
+    *,
+    strength: float = 0.0,
+    spread_mm: float = 8.0,
+    stain_color: Any = "#3b2a1a",
+    opacity: float = 1.0,
+    knot_inside_limit: float = -20.0,
+) -> np.ndarray:
+    s = float(strength)
+    spread = float(spread_mm)
+    alpha_scale = float(opacity)
+    if (
+        not np.isfinite(s)
+        or not np.isfinite(spread)
+        or not np.isfinite(alpha_scale)
+        or s <= 0.0
+        or spread <= 1e-9
+        or alpha_scale <= 0.0
+    ):
+        return rgb
+    knot_field = np.asarray(knot_field_image, dtype=np.float32)
+    if knot_field.shape != rgb.shape[:2]:
+        return rgb
+    finite = np.isfinite(knot_field)
+    if not np.any(finite):
+        return rgb
+
+    strength_safe = float(np.clip(s, 0.0, 1.0))
+    opacity_safe = float(np.clip(alpha_scale, 0.0, 1.0))
+    spread_safe = max(1e-6, spread)
+    limit = float(knot_inside_limit)
+    if not np.isfinite(limit):
+        limit = -20.0
+
+    inside = finite & (knot_field <= limit)
+    outside = finite & ~inside
+    distance = np.zeros_like(knot_field, dtype=np.float32)
+    distance[outside] = np.sqrt(np.maximum(knot_field[outside] - limit, 0.0))
+    weight = np.zeros_like(knot_field, dtype=np.float32)
+    weight[inside] = 1.0
+    weight[outside] = np.exp(-0.5 * (distance[outside] / spread_safe) ** 2)
+
+    base = np.asarray(rgb, dtype=np.float32) / 255.0
+    stain_rgb = _hex_to_rgb_float(stain_color)
+    # Strength controls darkness while the color picker controls hue.
+    target = np.clip(stain_rgb * (1.25 - 0.75 * strength_safe), 0.0, 1.0).reshape(1, 1, 3)
+    alpha = np.clip(weight * opacity_safe, 0.0, 1.0)
+    out = base.copy()
+    out[..., :3] = ((1.0 - alpha[..., None]) * base[..., :3]) + (alpha[..., None] * target)
+    return np.rint(np.clip(out, 0.0, 1.0) * 255.0).astype(np.uint8)
+
+
+def _render_color_matrix_png(
+    matrix_uv: np.ndarray,
+    *,
+    stops: List[Tuple[float, np.ndarray]],
+    size: int,
+    flip_x: bool = False,
+    transparent_nan: bool = False,
+    knot_field_uv: Any = None,
+    knot_inside_limit: float = -20.0,
+    knot_darkness: float = 0.0,
+    knot_darkness_spread_mm: float = 8.0,
+    knot_stain_color: Any = "#3b2a1a",
+    knot_opacity: float = 1.0,
+) -> bytes:
+    matrix = np.asarray(matrix_uv, dtype=np.float32)
+    if matrix.ndim != 2 or matrix.size == 0:
+        image = Image.new("RGBA" if transparent_nan else "RGB", (int(size), int(size)), color=(255, 255, 255, 0) if transparent_nan else (255, 255, 255))
+    else:
+        # matrix axes are (u, v). Image columns are u, image rows are reversed v.
+        finite = np.isfinite(matrix[:, ::-1].T)
+        stain_field_image = None
+        if knot_field_uv is not None:
+            stain_matrix = np.asarray(knot_field_uv, dtype=np.float32)
+            if stain_matrix.shape == matrix.shape:
+                stain_field_image = stain_matrix[:, ::-1].T
+        image_arr = _colorize_normalized_ring_values(matrix[:, ::-1].T, stops)
+        image_arr = _apply_knot_stain_to_rgb(
+            image_arr,
+            stain_field_image,
+            strength=knot_darkness,
+            spread_mm=knot_darkness_spread_mm,
+            stain_color=knot_stain_color,
+            opacity=knot_opacity,
+            knot_inside_limit=knot_inside_limit,
+        )
+        if bool(transparent_nan):
+            alpha = np.where(finite, 255, 0).astype(np.uint8)
+            image_arr = np.dstack([image_arr, alpha])
+        if bool(flip_x):
+            image_arr = image_arr[:, ::-1, :]
+        image = Image.fromarray(image_arr, mode="RGBA" if transparent_nan else "RGB")
+        if image.size != (int(size), int(size)):
+            image = image.resize((int(size), int(size)), resample=_pil_bilinear())
+    png_buffer = BytesIO()
+    image.save(png_buffer, format="PNG", optimize=False)
+    return png_buffer.getvalue()
+
+
+def _build_growth_color_surface_pngs(
+    growth_layer_fields: Any,
+    *,
+    size: int = 512,
+    color_stops: Any = None,
+    clip: float = 1.0,
+    knot_mask: Any = None,
+    knot_field: Any = None,
+    knot_inside_limit: float = -20.0,
+    knot_darkness: float = 0.0,
+    knot_darkness_spread_mm: float = 8.0,
+    knot_stain_color: Any = "#3b2a1a",
+    knot_opacity: float = 1.0,
+) -> Dict[str, bytes]:
+    normalized = _nearest_ring_normalized_field(growth_layer_fields, clip=float(clip))
+    if normalized.ndim != 3 or normalized.size == 0:
+        return {}
+    stain_field = None
+    if knot_field is not None:
+        try:
+            knot_arr = np.asarray(to_numpy(knot_field), dtype=np.float32)
+            if knot_arr.shape == normalized.shape:
+                stain_field = knot_arr
+        except Exception:
+            stain_field = None
+    if knot_mask is not None:
+        try:
+            mask_arr = np.asarray(to_numpy(knot_mask), dtype=bool)
+            if mask_arr.shape == normalized.shape:
+                normalized = normalized.copy()
+                normalized[mask_arr] = np.nan
+                if stain_field is not None:
+                    stain_field = stain_field.copy()
+                    stain_field[mask_arr] = np.nan
+        except Exception:
+            pass
+    stops = _parse_ring_color_stops(color_stops)
+    ny, nx, nz = normalized.shape
+    if ny <= 0 or nx <= 0 or nz <= 0:
+        return {}
+
+    y_mid_float = 0.5 * float(ny - 1)
+    y0 = int(np.floor(y_mid_float))
+    y1 = min(y0 + 1, ny - 1)
+    alpha = float(y_mid_float - y0)
+    y_mid_matrix = (1.0 - alpha) * normalized[y0, :, :] + alpha * normalized[y1, :, :]
+    y_mid_stain = None
+    if stain_field is not None:
+        y_mid_stain = (1.0 - alpha) * stain_field[y0, :, :] + alpha * stain_field[y1, :, :]
+
+    def render(matrix, *, flip_x=False, stain_matrix=None):
+        return _render_color_matrix_png(
+            matrix,
+            stops=stops,
+            size=size,
+            flip_x=flip_x,
+            knot_field_uv=stain_matrix,
+            knot_inside_limit=knot_inside_limit,
+            knot_darkness=knot_darkness,
+            knot_darkness_spread_mm=knot_darkness_spread_mm,
+            knot_stain_color=knot_stain_color,
+            knot_opacity=knot_opacity,
+        )
+
+    return {
+        "ring_color_1": render(normalized[-1, :, :], flip_x=True, stain_matrix=None if stain_field is None else stain_field[-1, :, :]),
+        "ring_color_2": render(normalized[0, :, :], stain_matrix=None if stain_field is None else stain_field[0, :, :]),
+        "ring_color_3": render(normalized[:, -1, :], stain_matrix=None if stain_field is None else stain_field[:, -1, :]),
+        "ring_color_4": render(normalized[:, 0, :], flip_x=True, stain_matrix=None if stain_field is None else stain_field[:, 0, :]),
+        "ring_color_5": render(y_mid_matrix, stain_matrix=y_mid_stain),
+        "ring_color_bottom": render(normalized[:, :, 0].T, stain_matrix=None if stain_field is None else stain_field[:, :, 0].T),
+        "ring_color_top": render(normalized[:, :, -1].T, stain_matrix=None if stain_field is None else stain_field[:, :, -1].T),
+    }
+
+
+def _build_growth_color_viewer_overlay_pngs(
+    growth_layer_fields: Any,
+    *,
+    size: int = 512,
+    color_stops: Any = None,
+    clip: float = 1.0,
+    knot_mask: Any = None,
+    knot_field: Any = None,
+    knot_inside_limit: float = -20.0,
+    knot_darkness: float = 0.0,
+    knot_darkness_spread_mm: float = 8.0,
+    knot_stain_color: Any = "#3b2a1a",
+    knot_opacity: float = 1.0,
+) -> Dict[str, bytes]:
+    normalized = _nearest_ring_normalized_field(growth_layer_fields, clip=float(clip))
+    if normalized.ndim != 3 or normalized.size == 0:
+        return {}
+    stain_field = None
+    if knot_field is not None:
+        try:
+            knot_arr = np.asarray(to_numpy(knot_field), dtype=np.float32)
+            if knot_arr.shape == normalized.shape:
+                stain_field = knot_arr
+        except Exception:
+            stain_field = None
+    if knot_mask is not None:
+        try:
+            mask_arr = np.asarray(to_numpy(knot_mask), dtype=bool)
+            if mask_arr.shape == normalized.shape:
+                normalized = normalized.copy()
+                normalized[mask_arr] = np.nan
+                if stain_field is not None:
+                    stain_field = stain_field.copy()
+                    stain_field[mask_arr] = np.nan
+        except Exception:
+            pass
+    stops = _parse_ring_color_stops(color_stops)
+    def render(matrix, *, stain_matrix=None):
+        return _render_color_matrix_png(
+            matrix,
+            stops=stops,
+            size=size,
+            flip_x=False,
+            knot_field_uv=stain_matrix,
+            knot_inside_limit=knot_inside_limit,
+            knot_darkness=knot_darkness,
+            knot_darkness_spread_mm=knot_darkness_spread_mm,
+            knot_stain_color=knot_stain_color,
+            knot_opacity=knot_opacity,
+        )
+    return {
+        "x_min": render(normalized[:, 0, :], stain_matrix=None if stain_field is None else stain_field[:, 0, :]),
+        "x_max": render(normalized[:, -1, :], stain_matrix=None if stain_field is None else stain_field[:, -1, :]),
+        "z_min": render(normalized[0, :, :], stain_matrix=None if stain_field is None else stain_field[0, :, :]),
+        "z_max": render(normalized[-1, :, :], stain_matrix=None if stain_field is None else stain_field[-1, :, :]),
+        # Model Z is board length and viewer Y. These are the two end cross-sections.
+        "y_min": render(normalized[:, :, 0].T, stain_matrix=None if stain_field is None else stain_field[:, :, 0].T),
+        "y_max": render(normalized[:, :, -1].T, stain_matrix=None if stain_field is None else stain_field[:, :, -1].T),
+    }
+
+
+def _build_growth_color_log_cap_overlay_pngs(
+    growth_layer_fields: Any,
+    outer_field: Any,
+    *,
+    size: int = 512,
+    color_stops: Any = None,
+    clip: float = 1.0,
+    knot_field: Any = None,
+    knot_inside_limit: float = -20.0,
+    knot_darkness: float = 0.0,
+    knot_darkness_spread_mm: float = 8.0,
+    knot_stain_color: Any = "#3b2a1a",
+    knot_opacity: float = 1.0,
+) -> Dict[str, bytes]:
+    normalized = _nearest_ring_normalized_field(growth_layer_fields, clip=float(clip))
+    if normalized.ndim != 3 or normalized.size == 0:
+        return {}
+    stain_field = None
+    if knot_field is not None:
+        try:
+            knot_arr = np.asarray(to_numpy(knot_field), dtype=np.float32)
+            if knot_arr.shape == normalized.shape:
+                stain_field = knot_arr
+        except Exception:
+            stain_field = None
+
+    try:
+        outer = np.asarray(to_numpy(outer_field), dtype=np.float32)
+        if outer.shape == normalized.shape:
+            normalized = normalized.copy()
+            normalized[~np.isfinite(outer) | (outer > 0.0)] = np.nan
+            if stain_field is not None:
+                stain_field = stain_field.copy()
+                stain_field[~np.isfinite(outer) | (outer > 0.0)] = np.nan
+    except Exception:
+        pass
+
+    stops = _parse_ring_color_stops(color_stops)
+    def render(matrix, *, stain_matrix=None):
+        return _render_color_matrix_png(
+            matrix,
+            stops=stops,
+            size=size,
+            flip_x=False,
+            transparent_nan=True,
+            knot_field_uv=stain_matrix,
+            knot_inside_limit=knot_inside_limit,
+            knot_darkness=knot_darkness,
+            knot_darkness_spread_mm=knot_darkness_spread_mm,
+            knot_stain_color=knot_stain_color,
+            knot_opacity=knot_opacity,
+        )
+    return {
+        # Log length is model Z, which maps to viewer Y. These are the two cut caps.
+        "y_min": render(
+            normalized[:, :, 0].T,
+            stain_matrix=None if stain_field is None else stain_field[:, :, 0].T,
+        ),
+        "y_max": render(
+            normalized[:, :, -1].T,
+            stain_matrix=None if stain_field is None else stain_field[:, :, -1].T,
+        ),
+    }
+
+
+def _encode_ring_color_overlay_pngs(
+    color_pngs: Dict[str, bytes],
+    face_keys: List[str],
+    *,
+    size: int = 512,
+) -> Optional[Dict[str, Dict[str, str]]]:
+    overlays: Dict[str, Dict[str, str]] = {}
+    size_safe = max(16, int(size))
+    for face_key in face_keys:
+        png_bytes = color_pngs.get(face_key)
+        if not png_bytes:
+            continue
+        overlays[face_key] = {
+            "filename": f"ring_color_{face_key}_{size_safe}.png",
+            "src": f"data:image/png;base64,{base64.b64encode(png_bytes).decode('ascii')}",
+        }
+    return overlays or None
+
+
+def _build_board_ring_color_overlay_payload(
+    growth_layer_fields: Any,
+    *,
+    knot_field: Any = None,
+    show_rings_inside_knots: bool = True,
+    knot_inside_limit: float = -20.0,
+    color_stops: Any = None,
+    clip: float = 1.0,
+    knot_darkness: float = 0.0,
+    knot_darkness_spread_mm: float = 8.0,
+    knot_stain_color: Any = "#3b2a1a",
+    knot_opacity: float = 1.0,
+    size: int = 512,
+) -> Optional[Dict[str, Dict[str, str]]]:
+    knot_mask = None
+    if not bool(show_rings_inside_knots) and knot_field is not None:
+        try:
+            knot_arr = np.asarray(to_numpy(knot_field), dtype=np.float32)
+            knot_mask = knot_arr <= float(knot_inside_limit)
+        except Exception:
+            knot_mask = None
+
+    size_safe = max(16, int(size))
+    color_pngs = _build_growth_color_viewer_overlay_pngs(
+        growth_layer_fields,
+        size=size_safe,
+        color_stops=color_stops,
+        clip=float(clip),
+        knot_mask=knot_mask,
+        knot_field=knot_field,
+        knot_inside_limit=float(knot_inside_limit),
+        knot_darkness=float(knot_darkness),
+        knot_darkness_spread_mm=float(knot_darkness_spread_mm),
+        knot_stain_color=knot_stain_color,
+        knot_opacity=float(knot_opacity),
+    )
+    return _encode_ring_color_overlay_pngs(
+        color_pngs,
+        ["x_min", "x_max", "z_min", "z_max", "y_min", "y_max"],
+        size=size_safe,
+    )
+
+
+def _build_log_ring_color_overlay_payload(
+    growth_layer_fields: Any,
+    outer_field: Any,
+    *,
+    knot_field: Any = None,
+    knot_inside_limit: float = -20.0,
+    color_stops: Any = None,
+    clip: float = 1.0,
+    knot_darkness: float = 0.0,
+    knot_darkness_spread_mm: float = 8.0,
+    knot_stain_color: Any = "#3b2a1a",
+    knot_opacity: float = 1.0,
+    size: int = 512,
+) -> Optional[Dict[str, Dict[str, str]]]:
+    size_safe = max(16, int(size))
+    color_pngs = _build_growth_color_log_cap_overlay_pngs(
+        growth_layer_fields,
+        outer_field,
+        size=size_safe,
+        color_stops=color_stops,
+        clip=float(clip),
+        knot_field=knot_field,
+        knot_inside_limit=float(knot_inside_limit),
+        knot_darkness=float(knot_darkness),
+        knot_darkness_spread_mm=float(knot_darkness_spread_mm),
+        knot_stain_color=knot_stain_color,
+        knot_opacity=float(knot_opacity),
+    )
+    return _encode_ring_color_overlay_pngs(
+        color_pngs,
+        ["y_min", "y_max"],
+        size=size_safe,
+    )
 
 
 def _classify_model_side(points: np.ndarray, board_dims: Dict[str, Any]) -> Optional[str]:
@@ -1576,6 +2143,70 @@ def preload_photorealistic():
         raise HTTPException(status_code=500, detail=f"Failed to preload photorealistic model: {e}")
 
 
+@app.post("/render/ring-color-overlays")
+def render_ring_color_overlays(req: RenderRingColorOverlaysRequest):
+    try:
+        sim_id = str(req.simulation_id or "").strip()
+        if not sim_id:
+            raise HTTPException(status_code=400, detail="simulation_id is required.")
+        entry = _SIM_CACHE.get(sim_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="Simulation data not found. Regenerate board before rendering color overlays.")
+
+        scalar_fields = entry.get("scalar_fields") or {}
+        growth_fields = scalar_fields.get("growth_layer_fields")
+        if growth_fields is None:
+            raise HTTPException(status_code=400, detail="Cached growth-layer scalar fields are missing. Regenerate board and retry.")
+
+        size = max(16, int(req.size or 512))
+        clip = max(1e-6, float(req.ring_color_clip if req.ring_color_clip is not None else 1.0))
+        knot_darkness = float(req.ring_color_knot_darkness if req.ring_color_knot_darkness is not None else 0.50)
+        knot_darkness_spread = max(
+            1e-6,
+            float(req.ring_color_knot_spread_mm if req.ring_color_knot_spread_mm is not None else 8.0),
+        )
+        knot_stain_color = str(req.ring_color_knot_stain_color or "#3b2a1a")
+        knot_opacity = float(np.clip(
+            float(req.ring_color_knot_opacity if req.ring_color_knot_opacity is not None else 1.0),
+            0.0,
+            1.0,
+        ))
+        color_stops = req.ring_color_stops
+        if str(entry.get("export_mode") or "board") == "log":
+            overlays = _build_log_ring_color_overlay_payload(
+                growth_fields,
+                scalar_fields.get("outer_log_field"),
+                knot_field=scalar_fields.get("knot_field"),
+                knot_inside_limit=float(req.knot_inside_limit) if req.knot_inside_limit is not None else -20.0,
+                size=size,
+                color_stops=color_stops,
+                clip=clip,
+                knot_darkness=knot_darkness,
+                knot_darkness_spread_mm=knot_darkness_spread,
+                knot_stain_color=knot_stain_color,
+                knot_opacity=knot_opacity,
+            )
+        else:
+            overlays = _build_board_ring_color_overlay_payload(
+                growth_fields,
+                knot_field=scalar_fields.get("knot_field"),
+                show_rings_inside_knots=bool(req.show_rings_inside_knots) if req.show_rings_inside_knots is not None else True,
+                knot_inside_limit=float(req.knot_inside_limit) if req.knot_inside_limit is not None else -20.0,
+                size=size,
+                color_stops=color_stops,
+                clip=clip,
+                knot_darkness=knot_darkness,
+                knot_darkness_spread_mm=knot_darkness_spread,
+                knot_stain_color=knot_stain_color,
+                knot_opacity=knot_opacity,
+            )
+        return {"ring_color_overlays": overlays or {}}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to render ring color overlays: {e}")
+
+
 @app.post("/export/contours")
 def export_contours(req: ExportContoursRequest):
     try:
@@ -2302,6 +2933,45 @@ def simulate(config: BoardConfig):
             "z": np.asarray(getattr(mesh, 'z_coords', []), dtype=np.float32),
         }
 
+        ring_color_overlays = None
+        if bool(getattr(config, "display_ring_color", False)):
+            try:
+                ring_color_kwargs = {
+                    "size": 512,
+                    "color_stops": (getattr(config, "ring_color_stops", "") or None),
+                    "clip": float(getattr(config, "ring_color_clip", 1.0) or 1.0),
+                    "knot_darkness": float(getattr(config, "ring_color_knot_darkness", 0.50) or 0.0),
+                    "knot_darkness_spread_mm": float(getattr(config, "ring_color_knot_spread_mm", 8.0) or 8.0),
+                    "knot_stain_color": str(getattr(config, "ring_color_knot_stain_color", "#3b2a1a") or "#3b2a1a"),
+                    "knot_opacity": float(np.clip(
+                        float(getattr(config, "ring_color_knot_opacity", 1.0) or 0.0),
+                        0.0,
+                        1.0,
+                    )),
+                }
+                knot_field = layers_data.get("ttt_live")
+                if knot_field is None:
+                    knot_field = layers_data.get("ttt")
+                if int(config.board_or_log) == 0:
+                    ring_color_overlays = _build_board_ring_color_overlay_payload(
+                        layers_data.get("growth_layer_fields") or [],
+                        knot_field=knot_field,
+                        show_rings_inside_knots=bool(getattr(config, "display_rings_inside_knots", True)),
+                        knot_inside_limit=float(config.knot_inside_limit),
+                        **ring_color_kwargs,
+                    )
+                else:
+                    ring_color_overlays = _build_log_ring_color_overlay_payload(
+                        layers_data.get("growth_layer_fields") or [],
+                        layers_data.get("last_g"),
+                        knot_field=knot_field,
+                        knot_inside_limit=float(config.knot_inside_limit),
+                        **ring_color_kwargs,
+                    )
+            except Exception as e:
+                print(f"Ring color overlay render error: {e}")
+                ring_color_overlays = None
+
         # 6. Knot isosurface (single board/log mesh-based knot field surface)
         knot_data = []
         knot_data_mat = []
@@ -2614,6 +3284,7 @@ def simulate(config: BoardConfig):
         }
         scalar_fields_mat = {
             "knot_field": _to_float32_3d(layers_data.get("ttt")),
+            "outer_log_field": _to_float32_3d(layers_data.get("last_g")),
             "growth_layer_fields": growth_layer_fields_mat,
             "growth_layer_indices": growth_layer_indices_mat,
         }
@@ -2665,6 +3336,7 @@ def simulate(config: BoardConfig):
             "normal_vectors": normal_vector_data,
             "normal_overlays": normal_overlays,
             "fiber_out_of_plane_overlays": fiber_out_of_plane_overlays,
+            "ring_color_overlays": ring_color_overlays,
             "knot_sequence": dict(getattr(k, "knot_sequence_info", {}) or {}),
             "geometry_randomization": dict(getattr(k, "geometry_randomization_info", {}) or {}),
             "warnings": warnings,
