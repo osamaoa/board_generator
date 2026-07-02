@@ -234,6 +234,7 @@ const ControlPanel = ({
         () => parseRingColorStops(config.ring_color_stops),
         [config.ring_color_stops]
     );
+    const isVeneerMode = toInt(config.board_or_log, 0) === 2;
 
     const manualKnots = useMemo(
         () => normalizeInputKnots(config),
@@ -290,6 +291,9 @@ const ControlPanel = ({
             nextConfig.veneer_length_mm = Math.max(0, toNumber(nextConfig.veneer_length_mm, 0.0));
             nextConfig.veneer_sheet_samples_length = Math.min(2400, Math.max(64, toInt(nextConfig.veneer_sheet_samples_length, 900)));
             nextConfig.veneer_sheet_samples_width = Math.min(1200, Math.max(32, toInt(nextConfig.veneer_sheet_samples_width, 260)));
+            nextConfig.veneer_fiber_texture_strength = Math.min(2, Math.max(0, toNumber(nextConfig.veneer_fiber_texture_strength, 0.65)));
+            nextConfig.veneer_fiber_texture_scale_mm = Math.max(0.05, toNumber(nextConfig.veneer_fiber_texture_scale_mm, 0.70));
+            nextConfig.veneer_fiber_texture_length_mm = Math.max(1, toNumber(nextConfig.veneer_fiber_texture_length_mm, 80.0));
         }
         if (key === 'random_crook_scale_max') {
             nextConfig.random_crook_scale_max = Math.max(0, toNumber(nextConfig.random_crook_scale_max, 1.0));
@@ -1419,6 +1423,37 @@ const ControlPanel = ({
                                         </label>
                                     </div>
                                 </div>
+
+                                {isVeneerMode && (
+                                    <div className="color-control-group">
+                                        <div className="color-control-header">
+                                            <span>Longitudinal Texture</span>
+                                        </div>
+                                        <div className="field-grid single">
+                                            <label className="field">
+                                                <span>Strength</span>
+                                                <div className="range-row">
+                                                    <input type="range" min={0} max={2} step={0.01} value={toNumber(config.veneer_fiber_texture_strength, 0.65)} onChange={(e) => handleChange('veneer_fiber_texture_strength', e.target.value, 'number')} />
+                                                    <strong>{toNumber(config.veneer_fiber_texture_strength, 0.65).toFixed(2)}</strong>
+                                                </div>
+                                            </label>
+                                            <label className="field">
+                                                <span>Scale</span>
+                                                <div className="range-row">
+                                                    <input type="range" min={0.05} max={3} step={0.05} value={toNumber(config.veneer_fiber_texture_scale_mm, 0.70)} onChange={(e) => handleChange('veneer_fiber_texture_scale_mm', e.target.value, 'number')} />
+                                                    <strong>{toNumber(config.veneer_fiber_texture_scale_mm, 0.70).toFixed(2)}</strong>
+                                                </div>
+                                            </label>
+                                            <label className="field">
+                                                <span>Streak Length</span>
+                                                <div className="range-row">
+                                                    <input type="range" min={1} max={180} step={1} value={toNumber(config.veneer_fiber_texture_length_mm, 80.0)} onChange={(e) => handleChange('veneer_fiber_texture_length_mm', e.target.value, 'number')} />
+                                                    <strong>{toNumber(config.veneer_fiber_texture_length_mm, 80.0).toFixed(0)}</strong>
+                                                </div>
+                                            </label>
+                                        </div>
+                                    </div>
+                                )}
                             </>
                         )}
 

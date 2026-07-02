@@ -87,6 +87,9 @@ _DEFAULT_KNOT_STAIN_DARKNESS = 0.08
 _DEFAULT_KNOT_STAIN_SPREAD_MM = 14.0
 _DEFAULT_KNOT_STAIN_COLOR = "#8f705b"
 _DEFAULT_KNOT_STAIN_OPACITY = 0.34
+_DEFAULT_VENEER_FIBER_TEXTURE_STRENGTH = 0.65
+_DEFAULT_VENEER_FIBER_TEXTURE_SCALE_MM = 0.70
+_DEFAULT_VENEER_FIBER_TEXTURE_LENGTH_MM = 80.0
 
 
 def _frontend_dist_dir() -> Path:
@@ -1231,6 +1234,162 @@ def _evaluate_veneer_knot_field(
         return None
 
 
+def _smooth_1d(values: np.ndarray, sigma: float) -> np.ndarray:
+    sigma_safe = float(sigma)
+    arr = np.asarray(values, dtype=np.float32)
+    if not np.isfinite(sigma_safe) or sigma_safe <= 0.35 or arr.size < 3:
+        return arr.astype(np.float32, copy=False)
+    radius = int(min(96, max(1, math.ceil(3.0 * sigma_safe))))
+    xx = np.arange(-radius, radius + 1, dtype=np.float32)
+    kernel = np.exp(-0.5 * (xx / sigma_safe) ** 2)
+    kernel = kernel / max(1e-12, float(np.sum(kernel)))
+    padded = np.pad(arr, (radius, radius), mode="reflect")
+    return np.convolve(padded, kernel.astype(np.float32), mode="valid").astype(np.float32, copy=False)
+
+
+def _resize_signed_noise(noise: np.ndarray, *, width: int, height: int) -> np.ndarray:
+    n = _normalize_unit_std(np.asarray(noise, dtype=np.float32))
+    image01 = np.clip(0.5 + (0.16 * np.clip(n, -3.0, 3.0)), 0.0, 1.0)
+    image = Image.fromarray(np.rint(image01 * 255.0).astype(np.uint8), mode="L")
+    resized = image.resize((int(width), int(height)), resample=_pil_lanczos())
+    arr = (np.asarray(resized, dtype=np.float32) / 255.0 - 0.5) / 0.16
+    return _normalize_unit_std(arr)
+
+
+def _apply_veneer_fiber_texture_to_rgb(
+    rgb: np.ndarray,
+    ring_phase: np.ndarray,
+    knot_field_image: Optional[np.ndarray],
+    *,
+    strength: float = _DEFAULT_VENEER_FIBER_TEXTURE_STRENGTH,
+    scale_mm: float = _DEFAULT_VENEER_FIBER_TEXTURE_SCALE_MM,
+    streak_length_mm: float = _DEFAULT_VENEER_FIBER_TEXTURE_LENGTH_MM,
+    sheet_length_mm: float = 1.0,
+    log_length_mm: float = 1.0,
+    knot_inside_limit: float = -20.0,
+    knot_spread_mm: float = _DEFAULT_KNOT_STAIN_SPREAD_MM,
+) -> np.ndarray:
+    s = float(strength)
+    scale = float(scale_mm)
+    streak_length = float(streak_length_mm)
+    if (
+        not np.isfinite(s)
+        or not np.isfinite(scale)
+        or not np.isfinite(streak_length)
+        or s <= 0.0
+        or scale <= 0.0
+        or streak_length <= 0.0
+    ):
+        return rgb
+
+    base_uint8 = np.asarray(rgb, dtype=np.uint8)
+    phase = np.asarray(ring_phase, dtype=np.float32)
+    if base_uint8.ndim != 3 or base_uint8.shape[-1] != 3 or phase.shape != base_uint8.shape[:2]:
+        return rgb
+    h, w = int(phase.shape[0]), int(phase.shape[1])
+    if h < 4 or w < 4:
+        return rgb
+
+    finite = np.isfinite(phase)
+    if not np.any(finite):
+        return rgb
+
+    s = float(np.clip(s, 0.0, 2.0))
+    px_per_mm_x = (w - 1) / max(1e-6, float(sheet_length_mm))
+    px_per_mm_y = (h - 1) / max(1e-6, float(log_length_mm))
+    scale_px = float(np.clip(scale * px_per_mm_x, 0.45, 12.0))
+    streak_px = float(np.clip(streak_length * px_per_mm_y, 6.0, max(6.0, h * 1.5)))
+
+    digest = hashlib.sha256()
+    digest.update(b"veneer_fiber_texture_v1")
+    digest.update(np.asarray([h, w, s, scale, streak_length, sheet_length_mm, log_length_mm], dtype=np.float32).tobytes())
+    sy = max(1, h // 96)
+    sx = max(1, w // 160)
+    digest.update(np.nan_to_num(phase[::sy, ::sx], nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32).tobytes())
+    if knot_field_image is not None:
+        knot_arr_for_seed = np.asarray(knot_field_image, dtype=np.float32)
+        if knot_arr_for_seed.shape == phase.shape:
+            digest.update(np.nan_to_num(knot_arr_for_seed[::sy, ::sx], nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32).tobytes())
+    rng = np.random.default_rng(int.from_bytes(digest.digest()[:8], byteorder="little", signed=False))
+
+    coarse_h = int(np.clip(round(h / max(1.0, streak_px / 7.5)), 6, h))
+    long_noise = _resize_signed_noise(rng.normal(0.0, 1.0, size=(coarse_h, w)).astype(np.float32), width=w, height=h)
+
+    column_noise = _smooth_1d(rng.normal(0.0, 1.0, size=w).astype(np.float32), sigma=max(0.5, scale_px * 0.9))
+    column_noise = _normalize_unit_std(column_noise)
+    column_noise = np.broadcast_to(column_noise[None, :], (h, w)).astype(np.float32, copy=False)
+
+    micro_h = max(12, min(h, int(round(h / 3.0))))
+    micro_w = max(32, min(w, int(round(w / max(1.0, scale_px)))))
+    micro_noise = _resize_signed_noise(
+        rng.normal(0.0, 1.0, size=(micro_h, micro_w)).astype(np.float32),
+        width=w,
+        height=h,
+    )
+
+    texture = _normalize_unit_std((0.50 * long_noise) + (0.35 * column_noise) + (0.15 * micro_noise))
+
+    knot_influence = None
+    if knot_field_image is not None:
+        knot_field = np.asarray(knot_field_image, dtype=np.float32)
+        if knot_field.shape == phase.shape:
+            finite_knot = np.isfinite(knot_field)
+            if np.any(finite_knot):
+                limit = float(knot_inside_limit)
+                if not np.isfinite(limit):
+                    limit = -20.0
+                spread = max(1e-6, float(knot_spread_mm))
+                influence = np.zeros_like(knot_field, dtype=np.float32)
+                inside = finite_knot & (knot_field <= limit)
+                outside = finite_knot & ~inside
+                influence[inside] = 1.0
+                distance = np.zeros_like(knot_field, dtype=np.float32)
+                distance[outside] = np.sqrt(np.maximum(knot_field[outside] - limit, 0.0))
+                influence[outside] = np.exp(-0.5 * (distance[outside] / spread) ** 2)
+                if np.any(influence > 1e-4):
+                    blur_px = float(np.clip(spread * 0.20 * max(px_per_mm_x, px_per_mm_y), 1.0, 18.0))
+                    knot_influence = _pil_blur_float01(np.clip(influence, 0.0, 1.0), radius=blur_px)
+                    gy, gx = np.gradient(knot_influence)
+                    grad_mag = np.abs(gx) + np.abs(gy)
+                    norm = float(np.percentile(grad_mag[grad_mag > 0.0], 98.0)) if np.any(grad_mag > 0.0) else 0.0
+                    if np.isfinite(norm) and norm > 1e-8:
+                        warp_px = float(np.clip(spread * px_per_mm_x * (0.20 + 0.35 * s), 1.0, 28.0))
+                        yy, xx = np.meshgrid(
+                            np.arange(h, dtype=np.float32),
+                            np.arange(w, dtype=np.float32),
+                            indexing="ij",
+                        )
+                        coords = np.asarray([
+                            yy + (0.45 * warp_px * gy / norm),
+                            xx + (warp_px * gx / norm),
+                        ], dtype=np.float32)
+                        texture = map_coordinates(texture, coords, order=1, mode="reflect").astype(np.float32, copy=False)
+
+    phase_abs = np.abs(np.nan_to_num(phase, nan=1.0, posinf=1.0, neginf=1.0))
+    latewood = np.exp(-0.5 * (phase_abs / 0.10) ** 2).astype(np.float32, copy=False)
+    ring_weight = np.clip(0.62 + (0.48 * latewood), 0.0, 1.15)
+    if knot_influence is not None:
+        ring_weight = ring_weight * np.clip(1.0 - (0.22 * knot_influence), 0.70, 1.0)
+
+    texture = _normalize_unit_std(texture)
+    texture = np.clip(texture, -2.7, 2.7)
+    dark = np.clip(texture, 0.0, 2.7)
+    light = np.clip(-texture, 0.0, 2.7)
+    delta = (0.026 * s) * ring_weight * ((0.58 * light) - (0.72 * dark))
+    delta[finite] = delta[finite] - float(np.mean(delta[finite], dtype=np.float64))
+    delta[~finite] = 0.0
+
+    base = base_uint8.astype(np.float32) / 255.0
+    gain = np.asarray([0.90, 0.98, 1.08], dtype=np.float32).reshape(1, 1, 3)
+    out = base.copy()
+    out[..., :3] = np.where(
+        finite[..., None],
+        np.clip(base[..., :3] + (delta[..., None] * gain), 0.0, 1.0),
+        base[..., :3],
+    )
+    return np.rint(out * 255.0).astype(np.uint8)
+
+
 def _build_veneer_payload(
     config: BoardConfig,
     knot_system: Any,
@@ -1337,6 +1496,31 @@ def _build_veneer_payload(
             opacity=float(knot_opacity),
             knot_inside_limit=float(config.knot_inside_limit),
         )
+        fiber_texture_strength = float(
+            getattr(config, "veneer_fiber_texture_strength", _DEFAULT_VENEER_FIBER_TEXTURE_STRENGTH)
+            if getattr(config, "veneer_fiber_texture_strength", None) is not None
+            else _DEFAULT_VENEER_FIBER_TEXTURE_STRENGTH
+        )
+        fiber_texture_scale_mm = float(
+            getattr(config, "veneer_fiber_texture_scale_mm", _DEFAULT_VENEER_FIBER_TEXTURE_SCALE_MM)
+            or _DEFAULT_VENEER_FIBER_TEXTURE_SCALE_MM
+        )
+        fiber_texture_length_mm = float(
+            getattr(config, "veneer_fiber_texture_length_mm", _DEFAULT_VENEER_FIBER_TEXTURE_LENGTH_MM)
+            or _DEFAULT_VENEER_FIBER_TEXTURE_LENGTH_MM
+        )
+        image_arr = _apply_veneer_fiber_texture_to_rgb(
+            image_arr,
+            sheet_values,
+            knot_sheet,
+            strength=fiber_texture_strength,
+            scale_mm=fiber_texture_scale_mm,
+            streak_length_mm=fiber_texture_length_mm,
+            sheet_length_mm=float(target_length),
+            log_length_mm=float(log_length),
+            knot_inside_limit=float(config.knot_inside_limit),
+            knot_spread_mm=float(knot_darkness_spread_mm),
+        )
         alpha = np.where(finite_sheet, 255, 0).astype(np.uint8)
         sheet_rgba = np.dstack([image_arr, alpha])
         sheet_img = Image.fromarray(sheet_rgba, mode="RGBA")
@@ -1415,6 +1599,9 @@ def _build_veneer_payload(
                 "actual_length_mm": float(target_length),
                 "log_length_mm": float(log_length),
                 "turns": float(theta[-1] / (2.0 * math.pi)),
+                "fiber_texture_strength": float(fiber_texture_strength),
+                "fiber_texture_scale_mm": float(fiber_texture_scale_mm),
+                "fiber_texture_length_mm": float(fiber_texture_length_mm),
             },
         }
     except Exception as exc:

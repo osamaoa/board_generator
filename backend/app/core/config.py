@@ -157,6 +157,9 @@ class BoardConfig(BaseModel):
     veneer_length_mm: float = 0.0
     veneer_sheet_samples_length: int = 900
     veneer_sheet_samples_width: int = 260
+    veneer_fiber_texture_strength: float = 0.65
+    veneer_fiber_texture_scale_mm: float = 0.70
+    veneer_fiber_texture_length_mm: float = 80.0
     
     transparent: bool = True
     board_opacity: float = 0.8

@@ -122,6 +122,9 @@ export const defaultConfig = {
   veneer_length_mm: 0.0,
   veneer_sheet_samples_length: 900,
   veneer_sheet_samples_width: 260,
+  veneer_fiber_texture_strength: 0.65,
+  veneer_fiber_texture_scale_mm: 0.70,
+  veneer_fiber_texture_length_mm: 80.0,
   display_board: true,
   board_opacity: 0.8,
   contour_line_width: 3.0,
@@ -277,6 +280,9 @@ export const normalizeLoadedConfig = (raw) => {
     1200,
     Math.max(32, Math.floor(toNumberOr(next.veneer_sheet_samples_width, defaultConfig.veneer_sheet_samples_width)))
   );
+  next.veneer_fiber_texture_strength = Math.min(2, Math.max(0, toNumberOr(next.veneer_fiber_texture_strength, defaultConfig.veneer_fiber_texture_strength)));
+  next.veneer_fiber_texture_scale_mm = Math.max(0.05, toNumberOr(next.veneer_fiber_texture_scale_mm, defaultConfig.veneer_fiber_texture_scale_mm));
+  next.veneer_fiber_texture_length_mm = Math.max(1, toNumberOr(next.veneer_fiber_texture_length_mm, defaultConfig.veneer_fiber_texture_length_mm));
   if (Number(next.board_or_log) === 2) {
     next.display_contours = false;
   }
