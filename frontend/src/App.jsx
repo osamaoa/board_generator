@@ -112,14 +112,17 @@ export const defaultConfig = {
   display_ring_color: false,
   ring_color_stops: '-0.6:#d8c8ae;-0.08:#d3bea0;0:#cbae8c;0.08:#d3bea0;0.6:#d8c8ae',
   ring_color_clip: 1.0,
-  ring_color_knot_darkness: 0.40,
-  ring_color_knot_spread_mm: 14.0,
+  ring_color_knot_darkness: 0.30,
+  ring_color_knot_spread_mm: 40.0,
   ring_color_knot_stain_color: '#8f705b',
-  ring_color_knot_opacity: 0.58,
-  veneer_outer_radius_mm: 70.0,
+  ring_color_knot_opacity: 1.0,
+  ring_color_knot_core_strength: 0.56,
+  ring_color_knot_ring_strength: 2.0,
+  ring_color_knot_reaction_strength: 2.0,
+  veneer_outer_radius_mm: 50.0,
   veneer_inner_radius_mm: 20.0,
   veneer_thickness_mm: 3.0,
-  veneer_length_mm: 0.0,
+  veneer_length_mm: 1000.0,
   veneer_sheet_samples_length: 900,
   veneer_sheet_samples_width: 260,
   veneer_fiber_texture_strength: 0.65,
@@ -268,6 +271,9 @@ export const normalizeLoadedConfig = (raw) => {
     ? next.ring_color_knot_stain_color
     : defaultConfig.ring_color_knot_stain_color;
   next.ring_color_knot_opacity = Math.min(1, Math.max(0, toNumberOr(next.ring_color_knot_opacity, defaultConfig.ring_color_knot_opacity)));
+  next.ring_color_knot_core_strength = Math.min(2, Math.max(0, toNumberOr(next.ring_color_knot_core_strength, defaultConfig.ring_color_knot_core_strength)));
+  next.ring_color_knot_ring_strength = Math.min(2, Math.max(0, toNumberOr(next.ring_color_knot_ring_strength, defaultConfig.ring_color_knot_ring_strength)));
+  next.ring_color_knot_reaction_strength = Math.min(2, Math.max(0, toNumberOr(next.ring_color_knot_reaction_strength, defaultConfig.ring_color_knot_reaction_strength)));
   next.veneer_outer_radius_mm = Math.max(1e-6, toNumberOr(next.veneer_outer_radius_mm, defaultConfig.veneer_outer_radius_mm));
   next.veneer_inner_radius_mm = Math.max(0, toNumberOr(next.veneer_inner_radius_mm, defaultConfig.veneer_inner_radius_mm));
   next.veneer_thickness_mm = Math.max(1e-6, toNumberOr(next.veneer_thickness_mm, defaultConfig.veneer_thickness_mm));

@@ -281,6 +281,22 @@
     padding-bottom: 6px;
 }
 
+.color-control-subheader {
+    display: flex;
+    align-items: center;
+    min-height: 18px;
+    margin: 10px 0 7px 0;
+}
+
+.color-control-subheader span {
+    font-size: 0.62rem;
+    color: var(--ui-ink-3);
+    font-weight: 800;
+    text-transform: uppercase;
+    font-family: 'IBM Plex Mono', 'JetBrains Mono', monospace;
+    letter-spacing: 0.07em;
+}
+
 .knot-stain-layout {
     display: grid;
     grid-template-columns: 72px minmax(0, 1fr);

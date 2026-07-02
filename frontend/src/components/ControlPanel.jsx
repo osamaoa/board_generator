@@ -28,6 +28,27 @@ const defaultManualCrookOrders = [1, 2, 3, 4, 5, 6, 7, 8];
 const defaultCrookShiftMaxMm = 8000.0;
 const defaultRandomTaperMax = 1.0 / 160.0;
 const defaultManualTaperCoeff = 1.0 / 160.0;
+const veneerModeDefaults = {
+    display_contours: false,
+    display_knots: true,
+    display_ring_color: true,
+    ring_color_knot_darkness: 0.30,
+    ring_color_knot_spread_mm: 40.0,
+    ring_color_knot_stain_color: '#8f705b',
+    ring_color_knot_opacity: 1.0,
+    ring_color_knot_core_strength: 0.56,
+    ring_color_knot_ring_strength: 2.0,
+    ring_color_knot_reaction_strength: 2.0,
+    veneer_outer_radius_mm: 50.0,
+    veneer_inner_radius_mm: 20.0,
+    veneer_thickness_mm: 3.0,
+    veneer_length_mm: 1000.0,
+    veneer_sheet_samples_length: 900,
+    veneer_sheet_samples_width: 260,
+    veneer_fiber_texture_strength: 0.65,
+    veneer_fiber_texture_scale_mm: 0.70,
+    veneer_fiber_texture_length_mm: 80.0,
+};
 
 const sectionTabs = [
     { id: 'geometry', label: 'GEOM' },
@@ -263,7 +284,7 @@ const ControlPanel = ({
 
         const nextConfig = { ...config, [key]: val };
         if (key === 'board_or_log' && toInt(nextConfig.board_or_log, 0) === 2) {
-            nextConfig.display_contours = false;
+            Object.assign(nextConfig, veneerModeDefaults);
         }
         if (key === 'mesh_size_x_mm' || key === 'mesh_size_y_mm' || key === 'mesh_size_z_mm') {
             const sx = Math.max(0.05, toNumber(nextConfig.mesh_size_x_mm, toNumber(config.mesh_size_x_mm, 2.0)));
@@ -285,10 +306,10 @@ const ControlPanel = ({
             nextConfig.log_layer_stride = Math.max(1, toInt(nextConfig.log_layer_stride, 5));
         }
         if (key.startsWith('veneer_')) {
-            nextConfig.veneer_outer_radius_mm = Math.max(1e-6, toNumber(nextConfig.veneer_outer_radius_mm, 70.0));
+            nextConfig.veneer_outer_radius_mm = Math.max(1e-6, toNumber(nextConfig.veneer_outer_radius_mm, 50.0));
             nextConfig.veneer_inner_radius_mm = Math.max(0, toNumber(nextConfig.veneer_inner_radius_mm, 20.0));
             nextConfig.veneer_thickness_mm = Math.max(1e-6, toNumber(nextConfig.veneer_thickness_mm, 3.0));
-            nextConfig.veneer_length_mm = Math.max(0, toNumber(nextConfig.veneer_length_mm, 0.0));
+            nextConfig.veneer_length_mm = Math.max(0, toNumber(nextConfig.veneer_length_mm, 1000.0));
             nextConfig.veneer_sheet_samples_length = Math.min(2400, Math.max(64, toInt(nextConfig.veneer_sheet_samples_length, 900)));
             nextConfig.veneer_sheet_samples_width = Math.min(1200, Math.max(32, toInt(nextConfig.veneer_sheet_samples_width, 260)));
             nextConfig.veneer_fiber_texture_strength = Math.min(2, Math.max(0, toNumber(nextConfig.veneer_fiber_texture_strength, 0.65)));
@@ -302,16 +323,25 @@ const ControlPanel = ({
             nextConfig.random_taper_max = Math.max(0, toNumber(nextConfig.random_taper_max, defaultRandomTaperMax));
         }
         if (key === 'ring_color_knot_darkness') {
-            nextConfig.ring_color_knot_darkness = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_darkness, 0.40)));
+            nextConfig.ring_color_knot_darkness = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_darkness, 0.30)));
         }
         if (key === 'ring_color_knot_spread_mm') {
-            nextConfig.ring_color_knot_spread_mm = Math.max(1e-6, toNumber(nextConfig.ring_color_knot_spread_mm, 14.0));
+            nextConfig.ring_color_knot_spread_mm = Math.max(1e-6, toNumber(nextConfig.ring_color_knot_spread_mm, 40.0));
         }
         if (key === 'ring_color_knot_stain_color') {
             nextConfig.ring_color_knot_stain_color = normalizeHexColor(nextConfig.ring_color_knot_stain_color, '#8f705b');
         }
         if (key === 'ring_color_knot_opacity') {
-            nextConfig.ring_color_knot_opacity = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_opacity, 0.58)));
+            nextConfig.ring_color_knot_opacity = Math.min(1, Math.max(0, toNumber(nextConfig.ring_color_knot_opacity, 1.0)));
+        }
+        if (key === 'ring_color_knot_core_strength') {
+            nextConfig.ring_color_knot_core_strength = Math.min(2, Math.max(0, toNumber(nextConfig.ring_color_knot_core_strength, 0.56)));
+        }
+        if (key === 'ring_color_knot_ring_strength') {
+            nextConfig.ring_color_knot_ring_strength = Math.min(2, Math.max(0, toNumber(nextConfig.ring_color_knot_ring_strength, 2.0)));
+        }
+        if (key === 'ring_color_knot_reaction_strength') {
+            nextConfig.ring_color_knot_reaction_strength = Math.min(2, Math.max(0, toNumber(nextConfig.ring_color_knot_reaction_strength, 2.0)));
         }
         if (key === 'knot_generator_min_rd_minus_rl_mm') {
             nextConfig.knot_generator_min_rd_minus_rl_mm = Math.max(0, toNumber(nextConfig.knot_generator_min_rd_minus_rl_mm, 30.0));
@@ -719,7 +749,7 @@ const ControlPanel = ({
                                             type="number"
                                             min={0.1}
                                             step="0.5"
-                                            value={toNumber(config.veneer_outer_radius_mm, 70.0)}
+                                            value={toNumber(config.veneer_outer_radius_mm, 50.0)}
                                             onChange={(e) => handleChange('veneer_outer_radius_mm', e.target.value, 'number')}
                                         />
                                     </label>
@@ -749,7 +779,7 @@ const ControlPanel = ({
                                             type="number"
                                             min={0}
                                             step="10"
-                                            value={toNumber(config.veneer_length_mm, 0.0)}
+                                            value={toNumber(config.veneer_length_mm, 1000.0)}
                                             onChange={(e) => handleChange('veneer_length_mm', e.target.value, 'number')}
                                         />
                                     </label>
@@ -1389,11 +1419,11 @@ const ControlPanel = ({
 
                                 <div className="color-control-group">
                                     <div className="color-control-header">
-                                        <span>Knot Staining</span>
+                                        <span>{isVeneerMode ? 'Layered Knot Effect' : 'Knot Staining'}</span>
                                     </div>
                                     <div className="knot-stain-layout">
                                         <label className="field knot-color-field">
-                                            <span>Stain Color</span>
+                                            <span>Knot Color</span>
                                             <input
                                                 type="color"
                                                 value={normalizeHexColor(config.ring_color_knot_stain_color, '#8f705b')}
@@ -1401,27 +1431,57 @@ const ControlPanel = ({
                                             />
                                         </label>
                                         <label className="field">
-                                            <span>Darkness</span>
+                                            <span>Overall Darkness</span>
                                             <div className="range-row">
-                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_darkness, 0.40)} onChange={(e) => handleChange('ring_color_knot_darkness', e.target.value, 'number')} />
-                                                <strong>{toNumber(config.ring_color_knot_darkness, 0.40).toFixed(2)}</strong>
+                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_darkness, 0.30)} onChange={(e) => handleChange('ring_color_knot_darkness', e.target.value, 'number')} />
+                                                <strong>{toNumber(config.ring_color_knot_darkness, 0.30).toFixed(2)}</strong>
                                             </div>
                                         </label>
                                         <label className="field">
-                                            <span>Opacity</span>
+                                            <span>Overall Opacity</span>
                                             <div className="range-row">
-                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_opacity, 0.58)} onChange={(e) => handleChange('ring_color_knot_opacity', e.target.value, 'number')} />
-                                                <strong>{toNumber(config.ring_color_knot_opacity, 0.58).toFixed(2)}</strong>
+                                                <input type="range" min={0} max={1} step={0.01} value={toNumber(config.ring_color_knot_opacity, 1.0)} onChange={(e) => handleChange('ring_color_knot_opacity', e.target.value, 'number')} />
+                                                <strong>{toNumber(config.ring_color_knot_opacity, 1.0).toFixed(2)}</strong>
                                             </div>
                                         </label>
                                         <label className="field">
-                                            <span>Spread</span>
+                                            <span>Reaction Spread</span>
                                             <div className="range-row">
-                                                <input type="range" min={0.5} max={40} step={0.5} value={toNumber(config.ring_color_knot_spread_mm, 14.0)} onChange={(e) => handleChange('ring_color_knot_spread_mm', e.target.value, 'number')} />
-                                                <strong>{toNumber(config.ring_color_knot_spread_mm, 14.0).toFixed(1)}</strong>
+                                                <input type="range" min={0.5} max={40} step={0.5} value={toNumber(config.ring_color_knot_spread_mm, 40.0)} onChange={(e) => handleChange('ring_color_knot_spread_mm', e.target.value, 'number')} />
+                                                <strong>{toNumber(config.ring_color_knot_spread_mm, 40.0).toFixed(1)}</strong>
                                             </div>
                                         </label>
                                     </div>
+                                    {isVeneerMode && (
+                                        <>
+                                            <div className="color-control-subheader">
+                                                <span>Layer Strengths</span>
+                                            </div>
+                                            <div className="field-grid">
+                                                <label className="field">
+                                                    <span>Core Material</span>
+                                                    <div className="range-row">
+                                                        <input type="range" min={0} max={2} step={0.01} value={toNumber(config.ring_color_knot_core_strength, 0.56)} onChange={(e) => handleChange('ring_color_knot_core_strength', e.target.value, 'number')} />
+                                                        <strong>{toNumber(config.ring_color_knot_core_strength, 0.56).toFixed(2)}</strong>
+                                                    </div>
+                                                </label>
+                                                <label className="field">
+                                                    <span>Disturbed Rings</span>
+                                                    <div className="range-row">
+                                                        <input type="range" min={0} max={2} step={0.01} value={toNumber(config.ring_color_knot_ring_strength, 2.0)} onChange={(e) => handleChange('ring_color_knot_ring_strength', e.target.value, 'number')} />
+                                                        <strong>{toNumber(config.ring_color_knot_ring_strength, 2.0).toFixed(2)}</strong>
+                                                    </div>
+                                                </label>
+                                                <label className="field">
+                                                    <span>Reaction Zone</span>
+                                                    <div className="range-row">
+                                                        <input type="range" min={0} max={2} step={0.01} value={toNumber(config.ring_color_knot_reaction_strength, 2.0)} onChange={(e) => handleChange('ring_color_knot_reaction_strength', e.target.value, 'number')} />
+                                                        <strong>{toNumber(config.ring_color_knot_reaction_strength, 2.0).toFixed(2)}</strong>
+                                                    </div>
+                                                </label>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
 
                                 {isVeneerMode && (

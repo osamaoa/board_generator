@@ -145,16 +145,19 @@ class BoardConfig(BaseModel):
     display_ring_color: bool = False
     ring_color_stops: str = "-0.6:#d8c8ae;-0.08:#d3bea0;0:#cbae8c;0.08:#d3bea0;0.6:#d8c8ae"
     ring_color_clip: float = 1.0
-    ring_color_knot_darkness: float = 0.40
-    ring_color_knot_spread_mm: float = 14.0
+    ring_color_knot_darkness: float = 0.30
+    ring_color_knot_spread_mm: float = 40.0
     ring_color_knot_stain_color: str = "#8f705b"
-    ring_color_knot_opacity: float = 0.58
+    ring_color_knot_opacity: float = 1.0
+    ring_color_knot_core_strength: float = 0.56
+    ring_color_knot_ring_strength: float = 2.0
+    ring_color_knot_reaction_strength: float = 2.0
 
     # Veneer-mode rotary peeling controls.
-    veneer_outer_radius_mm: float = 70.0
+    veneer_outer_radius_mm: float = 50.0
     veneer_inner_radius_mm: float = 20.0
     veneer_thickness_mm: float = 3.0
-    veneer_length_mm: float = 0.0
+    veneer_length_mm: float = 1000.0
     veneer_sheet_samples_length: int = 900
     veneer_sheet_samples_width: int = 260
     veneer_fiber_texture_strength: float = 0.65

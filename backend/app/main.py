@@ -83,10 +83,13 @@ _DEFAULT_RING_COLOR_STOPS = [
     (0.60, "#d8c8ae"),
 ]
 _DEFAULT_RING_COLOR_STOPS_TEXT = "-0.6:#d8c8ae;-0.08:#d3bea0;0:#cbae8c;0.08:#d3bea0;0.6:#d8c8ae"
-_DEFAULT_KNOT_STAIN_DARKNESS = 0.40
-_DEFAULT_KNOT_STAIN_SPREAD_MM = 14.0
+_DEFAULT_KNOT_STAIN_DARKNESS = 0.30
+_DEFAULT_KNOT_STAIN_SPREAD_MM = 40.0
 _DEFAULT_KNOT_STAIN_COLOR = "#8f705b"
-_DEFAULT_KNOT_STAIN_OPACITY = 0.58
+_DEFAULT_KNOT_STAIN_OPACITY = 1.0
+_DEFAULT_KNOT_CORE_STRENGTH = 0.56
+_DEFAULT_KNOT_RING_STRENGTH = 2.0
+_DEFAULT_KNOT_REACTION_STRENGTH = 2.0
 _DEFAULT_VENEER_FIBER_TEXTURE_STRENGTH = 0.65
 _DEFAULT_VENEER_FIBER_TEXTURE_SCALE_MM = 0.70
 _DEFAULT_VENEER_FIBER_TEXTURE_LENGTH_MM = 80.0
@@ -575,13 +578,31 @@ def _apply_knot_stain_to_rgb(
     return np.rint(np.clip(out, 0.0, 1.0) * 255.0).astype(np.uint8)
 
 
-def _apply_knot_deviation_stain_to_rgb(
+def _positive_robust_scale(values: np.ndarray, percentile: float = 96.0) -> float:
+    arr = np.asarray(values, dtype=np.float32)
+    finite = np.isfinite(arr) & (arr > 1e-8)
+    if not np.any(finite):
+        return 0.0
+    positive = arr[finite]
+    scale = float(np.percentile(positive, float(percentile)))
+    if not np.isfinite(scale) or scale <= 1e-8:
+        scale = float(np.max(positive))
+    return scale if np.isfinite(scale) and scale > 1e-8 else 0.0
+
+
+def _apply_veneer_knot_color_layers_to_rgb(
     rgb: np.ndarray,
+    ring_phase_image: np.ndarray,
+    knot_field_image: Optional[np.ndarray],
     deviation_image: Optional[np.ndarray],
+    reaction_lobe_image: Optional[np.ndarray],
     *,
     strength: float = 0.0,
     stain_color: Any = _DEFAULT_KNOT_STAIN_COLOR,
     opacity: float = _DEFAULT_KNOT_STAIN_OPACITY,
+    core_strength: float = _DEFAULT_KNOT_CORE_STRENGTH,
+    ring_strength: float = _DEFAULT_KNOT_RING_STRENGTH,
+    reaction_strength: float = _DEFAULT_KNOT_REACTION_STRENGTH,
 ) -> np.ndarray:
     s = float(strength)
     alpha_scale = float(opacity)
@@ -590,38 +611,96 @@ def _apply_knot_deviation_stain_to_rgb(
         or not np.isfinite(alpha_scale)
         or s <= 0.0
         or alpha_scale <= 0.0
-        or deviation_image is None
     ):
         return rgb
 
-    deviation = np.asarray(deviation_image, dtype=np.float32)
-    if deviation.shape != rgb.shape[:2]:
-        return rgb
-    finite = np.isfinite(deviation) & (deviation > 1e-6)
-    if not np.any(finite):
+    base_uint8 = np.asarray(rgb, dtype=np.uint8)
+    phase = np.asarray(ring_phase_image, dtype=np.float32)
+    if base_uint8.ndim != 3 or base_uint8.shape[-1] != 3 or phase.shape != base_uint8.shape[:2]:
         return rgb
 
-    positive = deviation[finite]
-    scale = float(np.percentile(positive, 96.0))
-    if not np.isfinite(scale) or scale <= 1e-6:
-        scale = float(np.max(positive))
-    if not np.isfinite(scale) or scale <= 1e-6:
+    finite_phase = np.isfinite(phase)
+    if not np.any(finite_phase):
         return rgb
 
-    weight = np.zeros_like(deviation, dtype=np.float32)
-    normalized = np.clip(deviation[finite] / scale, 0.0, 1.35)
-    weight[finite] = 1.0 - np.exp(-2.2 * normalized)
-    weight = np.clip(weight, 0.0, 1.0)
+    core = np.zeros_like(phase, dtype=np.float32)
+    if knot_field_image is not None:
+        knot_field = np.asarray(knot_field_image, dtype=np.float32)
+        if knot_field.shape == phase.shape:
+            finite_knot = np.isfinite(knot_field)
+            penetration = np.zeros_like(knot_field, dtype=np.float32)
+            penetration[finite_knot] = np.sqrt(np.maximum(-knot_field[finite_knot], 0.0))
+            scale = _positive_robust_scale(penetration, percentile=88.0)
+            if scale > 0.0:
+                core = np.clip(penetration / scale, 0.0, 1.0) ** 0.55
+                core = np.where(finite_knot & (knot_field < 0.0), core, 0.0).astype(np.float32, copy=False)
+                if np.any(core > 1e-4):
+                    core = _pil_blur_float01(core, radius=0.75)
+
+    deviation = np.zeros_like(phase, dtype=np.float32)
+    if deviation_image is not None:
+        dev_arr = np.asarray(deviation_image, dtype=np.float32)
+        if dev_arr.shape == phase.shape:
+            finite_dev = np.isfinite(dev_arr) & (dev_arr > 1e-6)
+            scale = _positive_robust_scale(dev_arr, percentile=96.0)
+            if scale > 0.0:
+                normalized = np.zeros_like(dev_arr, dtype=np.float32)
+                normalized[finite_dev] = np.clip(dev_arr[finite_dev] / scale, 0.0, 1.65)
+                deviation[finite_dev] = 1.0 - np.exp(-1.75 * np.sqrt(normalized[finite_dev]))
+                deviation = np.clip(deviation, 0.0, 1.0)
+
+    phase_abs = np.abs(np.nan_to_num(phase, nan=1.0, posinf=1.0, neginf=1.0))
+    latewood = np.exp(-0.5 * (phase_abs / 0.075) ** 2).astype(np.float32, copy=False)
+    disturbed_latewood = np.clip(deviation * latewood * (1.0 - (0.82 * core)), 0.0, 1.0)
+    if np.any(disturbed_latewood > 1e-4):
+        disturbed_latewood = _pil_blur_float01(disturbed_latewood, radius=0.35)
+
+    reaction = np.zeros_like(phase, dtype=np.float32)
+    if reaction_lobe_image is not None:
+        reaction_arr = np.asarray(reaction_lobe_image, dtype=np.float32)
+        if reaction_arr.shape == phase.shape:
+            reaction = np.clip(np.nan_to_num(reaction_arr, nan=0.0, posinf=0.0, neginf=0.0), 0.0, 1.0)
+            reaction = reaction * (0.35 + (0.65 * deviation)) * (1.0 - (0.58 * core))
+            reaction = np.clip(reaction, 0.0, 1.0)
+            if np.any(reaction > 1e-4):
+                reaction = _pil_blur_float01(reaction, radius=1.0)
+
+    finite_mask = finite_phase.astype(np.float32)
+    core = np.clip(core * finite_mask, 0.0, 1.0)
+    disturbed_latewood = np.clip(disturbed_latewood * finite_mask, 0.0, 1.0)
+    reaction = np.clip(reaction * finite_mask, 0.0, 1.0)
+    if not (np.any(core > 1e-4) or np.any(disturbed_latewood > 1e-4) or np.any(reaction > 1e-4)):
+        return rgb
 
     strength_safe = float(np.clip(s, 0.0, 1.0))
     opacity_safe = float(np.clip(alpha_scale, 0.0, 1.0))
-    base = np.asarray(rgb, dtype=np.float32) / 255.0
+    core_strength_safe = float(np.clip(float(core_strength), 0.0, 2.0))
+    ring_strength_safe = float(np.clip(float(ring_strength), 0.0, 2.0))
+    reaction_strength_safe = float(np.clip(float(reaction_strength), 0.0, 2.0))
+    base = base_uint8.astype(np.float32) / 255.0
     stain_rgb = _hex_to_rgb_float(stain_color).reshape(1, 1, 3)
-    target = np.clip(stain_rgb * (1.15 - 0.55 * strength_safe), 0.0, 1.0)
-    target = np.minimum(base[..., :3], target)
-    alpha = np.clip(weight * opacity_safe, 0.0, 1.0)
     out = base.copy()
-    out[..., :3] = ((1.0 - alpha[..., None]) * base[..., :3]) + (alpha[..., None] * target)
+
+    ring_alpha = np.clip(
+        opacity_safe * ring_strength_safe * (0.16 + (0.28 * strength_safe)) * disturbed_latewood,
+        0.0,
+        0.80,
+    )
+    ring_target = np.clip((out[..., :3] * (0.93 - (0.12 * strength_safe))) + (stain_rgb * 0.055), 0.0, 1.0)
+    out[..., :3] = ((1.0 - ring_alpha[..., None]) * out[..., :3]) + (ring_alpha[..., None] * ring_target)
+
+    reaction_alpha = np.clip(
+        opacity_safe * reaction_strength_safe * (0.10 + (0.20 * strength_safe)) * reaction,
+        0.0,
+        0.65,
+    )
+    reaction_target = np.clip((out[..., :3] * (0.97 - (0.08 * strength_safe))) + (stain_rgb * 0.055), 0.0, 1.0)
+    out[..., :3] = ((1.0 - reaction_alpha[..., None]) * out[..., :3]) + (reaction_alpha[..., None] * reaction_target)
+
+    core_alpha = np.clip(opacity_safe * core_strength_safe * (0.24 + (0.56 * strength_safe)) * core, 0.0, 0.95)
+    core_target = np.clip(stain_rgb * (1.06 - (0.30 * strength_safe)), 0.0, 1.0)
+    core_target = np.minimum(out[..., :3] * (0.98 - (0.10 * strength_safe)), core_target)
+    out[..., :3] = ((1.0 - core_alpha[..., None]) * out[..., :3]) + (core_alpha[..., None] * core_target)
     return np.rint(np.clip(out, 0.0, 1.0) * 255.0).astype(np.uint8)
 
 
@@ -1297,6 +1376,138 @@ def _evaluate_veneer_knot_field(
         return None
 
 
+def _evaluate_veneer_reaction_lobe_field(
+    config: BoardConfig,
+    knot_system: Any,
+    x_grid: np.ndarray,
+    y_grid: np.ndarray,
+    z_grid: np.ndarray,
+    *,
+    spread_mm: float = _DEFAULT_KNOT_STAIN_SPREAD_MM,
+) -> Optional[np.ndarray]:
+    splines = list(getattr(knot_system, "splines", []) or [])
+    n_knots = int(getattr(knot_system, "n_knots", 0) or 0)
+    if not splines or n_knots <= 0:
+        return None
+    try:
+        x_np = np.asarray(x_grid, dtype=np.float32)
+        y_np = np.asarray(y_grid, dtype=np.float32)
+        z_np = np.asarray(z_grid, dtype=np.float32)
+        if x_np.ndim != 2 or y_np.shape != x_np.shape or z_np.shape != x_np.shape:
+            return None
+
+        th0 = _as_float_array(getattr(knot_system, "th0", []))
+        z0 = _as_float_array(getattr(knot_system, "z0", []))
+        c1_arr = _as_float_array(getattr(knot_system, "c1", []))
+        c2_arr = _as_float_array(getattr(knot_system, "c2", []))
+        kp = _as_float_array(getattr(knot_system, "kp", []))
+        a1 = _as_float_array(getattr(knot_system, "a1", []))
+        a2 = _as_float_array(getattr(knot_system, "a2", []))
+        a3 = _as_float_array(getattr(knot_system, "a3", []))
+        a4 = _as_float_array(getattr(knot_system, "a4", []))
+        usable_knots = min(
+            n_knots,
+            th0.size,
+            z0.size,
+            c1_arr.size,
+            c2_arr.size,
+            kp.size,
+            a1.size,
+            a2.size,
+            a3.size,
+            a4.size,
+        )
+        if usable_knots <= 0:
+            return None
+
+        th0 = th0[:usable_knots]
+        z0 = z0[:usable_knots]
+        c1_arr = c1_arr[:usable_knots]
+        c2_arr = c2_arr[:usable_knots]
+        kp = np.maximum(kp[:usable_knots], 1e-6)
+        a1 = a1[:usable_knots]
+        a2 = a2[:usable_knots]
+        a3 = a3[:usable_knots]
+        a4 = a4[:usable_knots]
+
+        spread = float(spread_mm)
+        if not np.isfinite(spread) or spread <= 0.0:
+            spread = _DEFAULT_KNOT_STAIN_SPREAD_MM
+        spread = max(1e-6, spread)
+
+        h, w = x_np.shape
+        out = np.zeros((h, w), dtype=np.float32)
+        max_values = 650_000
+        chunk_cols = max(4, min(w, int(max_values / max(1, h * usable_knots))))
+        outer_spline = splines[-1]
+
+        for c0 in range(0, w, chunk_cols):
+            c1_idx = min(w, c0 + chunk_cols)
+            x_chunk = x_np[:, c0:c1_idx]
+            y_chunk = y_np[:, c0:c1_idx]
+            z_chunk = z_np[:, c0:c1_idx]
+            theta = np.arctan2(y_chunk, x_chunk).astype(np.float32, copy=False)
+            taper = _evaluate_np_field_function(getattr(knot_system, "taper", lambda z: 0.0), z_chunk)
+            ro_mod = np.asarray(outer_spline(theta), dtype=np.float32) - taper
+            ro_mod = np.maximum(ro_mod, 1.0)
+            x_trans = x_chunk + _evaluate_np_field_function(getattr(knot_system, "crook_x", lambda z: 0.0), z_chunk)
+            y_trans = y_chunk + _evaluate_np_field_function(getattr(knot_system, "crook_y", lambda z: 0.0), z_chunk)
+
+            cos_th0 = np.cos(th0)[None, None, :]
+            sin_th0 = np.sin(th0)[None, None, :]
+            radial_coord = x_trans[..., None] * cos_th0 - y_trans[..., None] * sin_th0
+            tangential_coord = x_trans[..., None] * sin_th0 + y_trans[..., None] * cos_th0
+            knot_axis_z = (
+                c1_arr[None, None, :] * radial_coord**2
+                + c2_arr[None, None, :] * radial_coord
+                + z0[None, None, :]
+            )
+            longitudinal_offset = z_chunk[..., None] - knot_axis_z
+
+            lx = (
+                a1[None, None, :] * radial_coord**4
+                + a2[None, None, :] * radial_coord**3
+                + a3[None, None, :] * radial_coord**2
+                + a4[None, None, :] * radial_coord
+            )
+            branch_radius = np.maximum(0.5 * lx, 0.0)
+            branch_radius_safe = np.maximum(branch_radius, 0.25)
+            axis_dist = np.sqrt(longitudinal_offset**2 + (tangential_coord / kp[None, None, :]) ** 2)
+
+            outside_dist = np.maximum(axis_dist - branch_radius_safe, 0.0)
+            zone = (spread * 1.25) + (branch_radius_safe * 0.45)
+            axis_gate = np.exp(-0.5 * (outside_dist / np.maximum(zone, 1e-6)) ** 2)
+            inside_gate = _smooth_sigmoid_np((branch_radius_safe - axis_dist) / max(1.0, spread * 0.18))
+
+            radial_soft = max(2.0, spread * 0.18)
+            radial_gate = (
+                _smooth_sigmoid_np(radial_coord / radial_soft)
+                * _smooth_sigmoid_np(((1.16 * ro_mod[..., None]) - radial_coord) / max(2.0, spread * 0.25))
+            )
+
+            side_width = np.maximum(np.maximum(branch_radius_safe * 0.80, spread * 0.35), 2.0)
+            side_bias = 0.35 + (0.65 * _smooth_sigmoid_np(tangential_coord / side_width))
+            long_width = (spread * 2.25) + (branch_radius_safe * 1.40)
+            long_tail = np.exp(-0.5 * (longitudinal_offset / np.maximum(long_width, 1e-6)) ** 2)
+            lobe = axis_gate * (1.0 - (0.45 * inside_gate)) * radial_gate * side_bias * (0.35 + (0.65 * long_tail))
+
+            valid = (
+                np.isfinite(lobe)
+                & (radial_coord > 0.0)
+                & (radial_coord < (1.20 * ro_mod[..., None]))
+            )
+            lobe = np.where(valid, lobe, 0.0)
+            out[:, c0:c1_idx] = np.maximum(out[:, c0:c1_idx], np.max(lobe, axis=2).astype(np.float32, copy=False))
+
+        out = np.clip(out, 0.0, 1.0)
+        if not np.any(out > 1e-4):
+            return None
+        return out.astype(np.float32, copy=False)
+    except Exception as exc:
+        print(f"Veneer reaction lobe field error: {exc}")
+        return None
+
+
 def _smooth_1d(values: np.ndarray, sigma: float) -> np.ndarray:
     sigma_safe = float(sigma)
     arr = np.asarray(values, dtype=np.float32)
@@ -1465,6 +1676,9 @@ def _build_veneer_payload(
     knot_darkness_spread_mm: float = _DEFAULT_KNOT_STAIN_SPREAD_MM,
     knot_stain_color: Any = _DEFAULT_KNOT_STAIN_COLOR,
     knot_opacity: float = _DEFAULT_KNOT_STAIN_OPACITY,
+    knot_core_strength: float = _DEFAULT_KNOT_CORE_STRENGTH,
+    knot_ring_strength: float = _DEFAULT_KNOT_RING_STRENGTH,
+    knot_reaction_strength: float = _DEFAULT_KNOT_REACTION_STRENGTH,
 ) -> Optional[Dict[str, Any]]:
     growth_layer_fields = layers_data.get("growth_layer_fields") or []
     normalized = _nearest_ring_normalized_field(growth_layer_fields, clip=float(clip))
@@ -1484,12 +1698,12 @@ def _build_veneer_payload(
         z_max = float(np.max(z_coords))
         log_length = max(1e-6, z_max - z_min)
 
-        outer = max(1e-6, float(getattr(config, "veneer_outer_radius_mm", 70.0) or 70.0))
+        outer = max(1e-6, float(getattr(config, "veneer_outer_radius_mm", 50.0) or 50.0))
         inner = max(0.0, float(getattr(config, "veneer_inner_radius_mm", 20.0) or 20.0))
         if inner >= outer:
             inner = max(0.0, outer - 1.0)
         thickness = max(1e-6, float(getattr(config, "veneer_thickness_mm", 3.0) or 3.0))
-        requested_length = max(0.0, float(getattr(config, "veneer_length_mm", 0.0) or 0.0))
+        requested_length = max(0.0, float(getattr(config, "veneer_length_mm", 1000.0) or 1000.0))
         turns_to_inner = max(0.0, (outer - inner) / thickness)
         theta_limit = 2.0 * math.pi * turns_to_inner
         if theta_limit <= 1e-6:
@@ -1537,11 +1751,10 @@ def _build_veneer_payload(
             or _DEFAULT_VENEER_FIBER_TEXTURE_LENGTH_MM
         )
 
+        knot_color_active = float(knot_darkness) > 0.0 and float(knot_opacity) > 0.0
         knot_sheet = None
-        if (
-            (float(knot_darkness) > 0.0 and float(knot_opacity) > 0.0)
-            or float(fiber_texture_strength) > 0.0
-        ):
+        reaction_lobe = None
+        if knot_color_active or float(fiber_texture_strength) > 0.0:
             knot_sheet = _evaluate_veneer_knot_field(config, knot_system, x_grid, y_grid, z_grid)
             if knot_sheet is None:
                 knot_field = layers_data.get("ttt_live")
@@ -1549,6 +1762,15 @@ def _build_veneer_payload(
                     knot_field = layers_data.get("ttt")
                 if knot_field is not None:
                     knot_sheet = _sample_volume_on_xyz(knot_field, mesh, x_grid, y_grid, z_grid)
+        if knot_color_active:
+            reaction_lobe = _evaluate_veneer_reaction_lobe_field(
+                config,
+                knot_system,
+                x_grid,
+                y_grid,
+                z_grid,
+                spread_mm=float(knot_darkness_spread_mm),
+            )
 
         sheet_result = _evaluate_veneer_smooth_radial_fields(
             config,
@@ -1574,12 +1796,18 @@ def _build_veneer_payload(
 
         stops = _parse_ring_color_stops(color_stops)
         image_arr = _colorize_normalized_ring_values(sheet_values, stops)
-        image_arr = _apply_knot_deviation_stain_to_rgb(
+        image_arr = _apply_veneer_knot_color_layers_to_rgb(
             image_arr,
+            sheet_values,
+            knot_sheet,
             sheet_deviation,
+            reaction_lobe,
             strength=float(knot_darkness),
             stain_color=knot_stain_color,
             opacity=float(knot_opacity),
+            core_strength=float(knot_core_strength),
+            ring_strength=float(knot_ring_strength),
+            reaction_strength=float(knot_reaction_strength),
         )
         image_arr = _apply_veneer_fiber_texture_to_rgb(
             image_arr,
@@ -1671,7 +1899,11 @@ def _build_veneer_payload(
                 "actual_length_mm": float(target_length),
                 "log_length_mm": float(log_length),
                 "turns": float(theta[-1] / (2.0 * math.pi)),
-                "knot_color_metric": "growth_layer_radial_deviation_mm",
+                "knot_color_model": "layered_core_latewood_reaction",
+                "knot_color_metric": "knot_implicit_field + growth_layer_radial_deviation_mm + branch_axis_reaction_lobe",
+                "knot_core_strength": float(knot_core_strength),
+                "knot_ring_strength": float(knot_ring_strength),
+                "knot_reaction_strength": float(knot_reaction_strength),
                 "fiber_texture_strength": float(fiber_texture_strength),
                 "fiber_texture_scale_mm": float(fiber_texture_scale_mm),
                 "fiber_texture_length_mm": float(fiber_texture_length_mm),
@@ -3854,6 +4086,35 @@ def simulate(config: BoardConfig):
             try:
                 veneer_kwargs = dict(ring_color_kwargs)
                 veneer_kwargs.pop("size", None)
+                veneer_kwargs.update({
+                    "knot_core_strength": float(np.clip(
+                        float(
+                            getattr(config, "ring_color_knot_core_strength", _DEFAULT_KNOT_CORE_STRENGTH)
+                            if getattr(config, "ring_color_knot_core_strength", None) is not None
+                            else _DEFAULT_KNOT_CORE_STRENGTH
+                        ),
+                        0.0,
+                        2.0,
+                    )),
+                    "knot_ring_strength": float(np.clip(
+                        float(
+                            getattr(config, "ring_color_knot_ring_strength", _DEFAULT_KNOT_RING_STRENGTH)
+                            if getattr(config, "ring_color_knot_ring_strength", None) is not None
+                            else _DEFAULT_KNOT_RING_STRENGTH
+                        ),
+                        0.0,
+                        2.0,
+                    )),
+                    "knot_reaction_strength": float(np.clip(
+                        float(
+                            getattr(config, "ring_color_knot_reaction_strength", _DEFAULT_KNOT_REACTION_STRENGTH)
+                            if getattr(config, "ring_color_knot_reaction_strength", None) is not None
+                            else _DEFAULT_KNOT_REACTION_STRENGTH
+                        ),
+                        0.0,
+                        2.0,
+                    )),
+                })
                 veneer_payload = _build_veneer_payload(
                     config,
                     k,
