@@ -1,12 +1,11 @@
 import numpy as np
 import scipy.io
 import os
-from pathlib import Path
 from typing import List
 from .config import BoardConfig
 from .array_backend import get_xp, gpu_enabled, to_numpy
 from .knot_sequence_model import (
-    default_training_mat_path,
+    resolve_knot_training_data_path,
     sample_random_knot_log,
     resolve_knot_sequence_runtime_info,
 )
@@ -680,9 +679,9 @@ class KnotSystem:
         data_path = self._data_path()
         configured_training_mat_path = str(getattr(p, "knot_sequence_training_data_path", "") or "").strip()
         if configured_training_mat_path:
-            training_mat_path = str(Path(configured_training_mat_path).expanduser().resolve())
+            training_mat_path = str(resolve_knot_training_data_path(configured_training_mat_path))
         else:
-            training_mat_path = str(default_training_mat_path().resolve())
+            training_mat_path = str(resolve_knot_training_data_path())
 
         # Load knots data
         d_knots = self._load_mat_cached(training_mat_path)

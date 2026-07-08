@@ -433,6 +433,10 @@ const normalizePhotorealisticCapability = (raw) => ({
   ...(raw && typeof raw === 'object' ? raw : {}),
 });
 
+const normalizeKnotSequenceCapability = (raw) => (
+  raw && typeof raw === 'object' ? raw : null
+);
+
 const basenameFromPath = (pathValue) => {
   const text = typeof pathValue === 'string' ? pathValue.trim() : '';
   if (!text) return '';
@@ -445,12 +449,19 @@ const buildKnotSequenceIndicator = (raw) => {
   if (!raw || typeof raw !== 'object') return null;
   const mode = String(raw.mode || '').trim().toLowerCase();
   const checkpointName = basenameFromPath(raw.checkpoint_path);
+  const numpyCheckpointName = basenameFromPath(raw.numpy_checkpoint_path);
   const note = String(raw.load_note || '').trim();
 
   if (mode === 'pytorch_lstm') {
     return {
       level: 'success',
       message: `Knot model: checkpoint sampler active (${checkpointName || 'knot_sequence_model.pt'}).`,
+    };
+  }
+  if (mode === 'numpy_lstm') {
+    return {
+      level: 'success',
+      message: `Knot model: HF checkpoint sampler active (${numpyCheckpointName || 'knot_sequence_model.npz'}).`,
     };
   }
   if (mode === 'fallback_markov') {
@@ -498,6 +509,7 @@ function App() {
   const [preloadingPhotorealistic, setPreloadingPhotorealistic] = useState(false);
   const [capabilities, setCapabilities] = useState({
     photorealistic_export: defaultPhotorealisticCapability,
+    knot_sequence_model: null,
   });
   const [error, setError] = useState(null);
   const [warnings, setWarnings] = useState([]);
@@ -556,12 +568,14 @@ function App() {
         const photorealistic = normalizePhotorealisticCapability(payload.photorealistic_export);
         setCapabilities({
           photorealistic_export: photorealistic,
+          knot_sequence_model: normalizeKnotSequenceCapability(payload.knot_sequence_model),
         });
       } catch (err) {
         console.error(err);
         if (!isMounted) return;
         setCapabilities({
           photorealistic_export: normalizePhotorealisticCapability(null),
+          knot_sequence_model: null,
         });
       }
     };
@@ -904,6 +918,7 @@ function App() {
       const photorealistic = normalizePhotorealisticCapability(payload.photorealistic_export);
       setCapabilities({
         photorealistic_export: photorealistic,
+        knot_sequence_model: normalizeKnotSequenceCapability(payload.knot_sequence_model),
       });
       setConfigFeedback({
         type: 'success',
@@ -940,7 +955,7 @@ function App() {
     && typeof simulationData.fiber_out_of_plane_overlays === 'object'
     && Object.keys(simulationData.fiber_out_of_plane_overlays).length > 0
   );
-  const knotSequenceIndicator = buildKnotSequenceIndicator(simulationData?.knot_sequence);
+  const knotSequenceIndicator = buildKnotSequenceIndicator(simulationData?.knot_sequence || capabilities?.knot_sequence_model);
 
   const handleSaveConfig = () => {
     try {

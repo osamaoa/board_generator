@@ -14,6 +14,9 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV BOARD_GENERATOR_DEMO=1
 ENV BOARD_GENERATOR_FRONTEND_DIST=/app/frontend_dist
+ENV BOARD_GENERATOR_KNOT_MODEL_REPO=OsamaAbdeljaber/board-generator-knot-model
+ENV BOARD_GENERATOR_KNOT_MODEL_REVISION=main
+ENV BOARD_GENERATOR_KNOT_MODEL_CACHE_DIR=/tmp/board_generator_knot_model
 
 WORKDIR /app
 
@@ -28,8 +31,6 @@ RUN python -m pip install --upgrade pip \
 COPY backend ./backend
 COPY data ./data
 COPY visualize_exported_board.m ./visualize_exported_board.m
-COPY knot_model_checkpoint/knot_sequence_model.json ./knot_model_checkpoint/knot_sequence_model.json
-COPY knot_model_checkpoint/training_data_new_2025.mat ./knot_model_checkpoint/training_data_new_2025.mat
 COPY --from=frontend-build /app/frontend/dist ./frontend_dist
 
 EXPOSE 7860

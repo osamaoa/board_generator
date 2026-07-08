@@ -25,6 +25,3 @@ SDXL_model
 SD2_model
 
 knot_model_checkpoint/*
-!knot_model_checkpoint/knot_sequence_model.pt
-!knot_model_checkpoint/knot_sequence_model.json
-!knot_model_checkpoint/training_data_new_2025.mat

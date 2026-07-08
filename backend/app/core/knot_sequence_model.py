@@ -5,13 +5,23 @@ from datetime import datetime, timezone
 from html import escape
 import json
 import math
+import os
 from pathlib import Path
 import threading
 from typing import Any, Dict, Iterable, Optional
+import urllib.error
+import urllib.parse
+import urllib.request
 
 import numpy as np
 import scipy.io
 from scipy.cluster.vq import kmeans2
+
+_DEFAULT_HF_KNOT_MODEL_REPO = "OsamaAbdeljaber/board-generator-knot-model"
+_DEFAULT_HF_KNOT_MODEL_REVISION = "main"
+_DEFAULT_HF_NUMPY_CHECKPOINT_FILENAME = "knot_sequence_model.npz"
+_DEFAULT_HF_TORCH_CHECKPOINT_FILENAME = "knot_sequence_model.pt"
+_DEFAULT_HF_TRAINING_DATA_FILENAME = "training_data_new_2025.mat"
 
 
 def _repo_root() -> Path:
@@ -27,11 +37,141 @@ def default_checkpoint_path() -> Path:
     return _repo_root() / "knot_model_checkpoint" / "knot_sequence_model.pt"
 
 
+def default_numpy_checkpoint_path() -> Path:
+    return _repo_root() / "knot_model_checkpoint" / "knot_sequence_model.npz"
+
+
 def _resolve_path(path_value: str, fallback: Path) -> Path:
     text = str(path_value or "").strip()
     if text:
         return Path(text).expanduser().resolve()
     return fallback.resolve()
+
+
+def _hf_model_repo_id() -> str:
+    return str(os.environ.get("BOARD_GENERATOR_KNOT_MODEL_REPO", "") or "").strip()
+
+
+def _hf_model_revision() -> str:
+    return str(
+        os.environ.get("BOARD_GENERATOR_KNOT_MODEL_REVISION", _DEFAULT_HF_KNOT_MODEL_REVISION) or _DEFAULT_HF_KNOT_MODEL_REVISION
+    ).strip()
+
+
+def _hf_model_cache_dir() -> Path:
+    configured = str(os.environ.get("BOARD_GENERATOR_KNOT_MODEL_CACHE_DIR", "") or "").strip()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    return (Path(os.environ.get("HF_HOME", "~/.cache/huggingface")).expanduser() / "board_generator_knot_model").resolve()
+
+
+def _hf_asset_filename(env_name: str, default_filename: str) -> str:
+    return str(os.environ.get(env_name, default_filename) or default_filename).strip()
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    text = str(os.environ.get(name, "") or "").strip().lower()
+    if not text:
+        return bool(default)
+    return text in {"1", "true", "yes", "on"}
+
+
+def _hf_resolve_url(repo_id: str, revision: str, filename: str) -> str:
+    clean_repo = repo_id.strip().strip("/")
+    clean_revision = urllib.parse.quote(str(revision or "main").strip(), safe="")
+    clean_path = "/".join(urllib.parse.quote(part, safe="") for part in str(filename).strip("/").split("/"))
+    return f"https://huggingface.co/{clean_repo}/resolve/{clean_revision}/{clean_path}"
+
+
+def _download_hf_model_file(filename: str) -> Optional[Path]:
+    repo_id = _hf_model_repo_id()
+    if not repo_id:
+        return None
+
+    revision = _hf_model_revision()
+    cache_path = _hf_model_cache_dir() / repo_id.replace("/", "--") / revision / filename
+    if cache_path.is_file() and cache_path.stat().st_size > 0:
+        return cache_path
+
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        from huggingface_hub import hf_hub_download  # type: ignore
+
+        downloaded = hf_hub_download(
+            repo_id=repo_id,
+            filename=filename,
+            revision=revision,
+            cache_dir=str(_hf_model_cache_dir()),
+        )
+        return Path(downloaded).expanduser().resolve()
+    except Exception as hub_exc:
+        url = _hf_resolve_url(repo_id, revision, filename)
+        tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+        try:
+            with urllib.request.urlopen(url, timeout=120) as response, tmp_path.open("wb") as fh:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+            tmp_path.replace(cache_path)
+            print(f"[knot-seq] downloaded {filename} from HF model repo {repo_id}@{revision}")
+            return cache_path
+        except (OSError, urllib.error.URLError, urllib.error.HTTPError) as url_exc:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            print(
+                "[knot-seq] failed to download "
+                f"{filename} from HF model repo {repo_id}@{revision}: hub={hub_exc}; url={url_exc}"
+            )
+            return None
+
+
+def resolve_knot_training_data_path(path_value: str = "") -> Path:
+    configured = str(path_value or "").strip()
+    path = _resolve_path(configured, default_training_mat_path())
+    if path.is_file():
+        return path
+    if not configured:
+        fetched = _download_hf_model_file(
+            _hf_asset_filename("BOARD_GENERATOR_KNOT_TRAINING_DATA_FILENAME", _DEFAULT_HF_TRAINING_DATA_FILENAME)
+        )
+        if fetched is not None and fetched.is_file():
+            return fetched
+    return path
+
+
+def resolve_knot_checkpoint_path(path_value: str = "") -> Path:
+    configured = str(path_value or "").strip()
+    path = _resolve_path(configured, default_checkpoint_path())
+    if path.is_file():
+        return path
+    if not configured and _env_flag("BOARD_GENERATOR_KNOT_DOWNLOAD_TORCH_CHECKPOINT", False):
+        fetched = _download_hf_model_file(
+            _hf_asset_filename("BOARD_GENERATOR_KNOT_TORCH_CHECKPOINT_FILENAME", _DEFAULT_HF_TORCH_CHECKPOINT_FILENAME)
+        )
+        if fetched is not None and fetched.is_file():
+            return fetched
+    return path
+
+
+def resolve_knot_numpy_checkpoint_path(path_value: str = "") -> Path:
+    configured = str(path_value or "").strip()
+    if configured and Path(configured).suffix.lower() == ".npz":
+        path = Path(configured).expanduser().resolve()
+    else:
+        path = default_numpy_checkpoint_path().resolve()
+    if path.is_file():
+        return path
+    if not configured:
+        fetched = _download_hf_model_file(
+            _hf_asset_filename("BOARD_GENERATOR_KNOT_NUMPY_CHECKPOINT_FILENAME", _DEFAULT_HF_NUMPY_CHECKPOINT_FILENAME)
+        )
+        if fetched is not None and fetched.is_file():
+            return fetched
+    return path
 
 
 def _normalize_range_per_column(data: np.ndarray) -> np.ndarray:
@@ -741,8 +881,9 @@ class KnotSequenceRuntime:
         allow_fallback: bool = True,
         device: str = "auto",
     ):
-        self.checkpoint_path = _resolve_path(checkpoint_path, default_checkpoint_path())
-        self.training_mat_path = _resolve_path(training_mat_path, default_training_mat_path())
+        self.checkpoint_path = resolve_knot_checkpoint_path(checkpoint_path)
+        self.numpy_checkpoint_path = resolve_knot_numpy_checkpoint_path(checkpoint_path)
+        self.training_mat_path = resolve_knot_training_data_path(training_mat_path)
         self.allow_fallback = bool(allow_fallback)
         self.requested_device = str(device or "auto").strip().lower()
 
@@ -754,6 +895,7 @@ class KnotSequenceRuntime:
         self._torch: Any = None
         self._model: Any = None
         self._device: Any = None
+        self._numpy_model: Optional[Dict[str, Any]] = None
         self._vocab_size: int = 0
 
         self._fallback_transitions: Dict[int, tuple[np.ndarray, np.ndarray]] = {}
@@ -779,15 +921,21 @@ class KnotSequenceRuntime:
                 self._loaded = True
                 return
 
+            numpy_error = self._try_load_numpy_checkpoint()
+            if numpy_error is None:
+                print(f"[knot-seq] loaded NumPy checkpoint sampler: {self.numpy_checkpoint_path}")
+                self._loaded = True
+                return
+
             if not self.allow_fallback:
-                raise RuntimeError(error)
+                raise RuntimeError(f"{error}; {numpy_error}")
 
             self._build_fallback_sampler()
             self._mode = "fallback_markov"
-            self._load_note = error
+            self._load_note = f"{error}; {numpy_error}"
             print(
                 "[knot-seq] checkpoint sampler unavailable; using fallback Markov sampler. "
-                f"reason={error} fallback_data={self.training_mat_path}"
+                f"reason={self._load_note} fallback_data={self.training_mat_path}"
             )
             self._loaded = True
 
@@ -870,6 +1018,75 @@ class KnotSequenceRuntime:
         self._vocab_size = int(vocab_size)
         self._mode = "pytorch_lstm"
         self._load_note = f"device={device}"
+        return None
+
+    def _try_load_numpy_checkpoint(self) -> Optional[str]:
+        if not self.numpy_checkpoint_path.is_file():
+            return f"NumPy checkpoint not found: {self.numpy_checkpoint_path}"
+
+        try:
+            payload = np.load(self.numpy_checkpoint_path, allow_pickle=False)
+        except Exception as exc:
+            return f"Failed to load NumPy checkpoint {self.numpy_checkpoint_path}: {exc}"
+
+        try:
+            metadata_text = str(payload["metadata"].item())
+            metadata = json.loads(metadata_text)
+            vocab_size = int(metadata.get("vocab_size", payload["embedding_weight"].shape[0]))
+            hidden_size = int(metadata.get("hidden_size", 0))
+            num_layers = int(metadata.get("num_layers", 0))
+            embedding_weight = np.asarray(payload["embedding_weight"], dtype=np.float32)
+            head_weight = np.asarray(payload["head_weight"], dtype=np.float32)
+            head_bias = np.asarray(payload["head_bias"], dtype=np.float32)
+
+            layers = []
+            for layer_idx in range(num_layers):
+                layers.append(
+                    {
+                        "weight_ih": np.asarray(payload[f"lstm_weight_ih_l{layer_idx}"], dtype=np.float32),
+                        "weight_hh": np.asarray(payload[f"lstm_weight_hh_l{layer_idx}"], dtype=np.float32),
+                        "bias_ih": np.asarray(payload[f"lstm_bias_ih_l{layer_idx}"], dtype=np.float32),
+                        "bias_hh": np.asarray(payload[f"lstm_bias_hh_l{layer_idx}"], dtype=np.float32),
+                    }
+                )
+        except Exception as exc:
+            return f"Invalid NumPy checkpoint format in {self.numpy_checkpoint_path}: {exc}"
+        finally:
+            payload.close()
+
+        if vocab_size <= 1:
+            return f"Invalid vocab_size in NumPy checkpoint: {vocab_size}"
+        if hidden_size <= 0 or num_layers <= 0:
+            return f"Invalid LSTM shape metadata in NumPy checkpoint: hidden={hidden_size} layers={num_layers}"
+        if embedding_weight.shape[0] < vocab_size:
+            return f"Embedding rows {embedding_weight.shape[0]} smaller than vocab_size {vocab_size}"
+        if head_weight.shape != (vocab_size, hidden_size):
+            return f"Invalid head weight shape in NumPy checkpoint: {head_weight.shape}"
+        if head_bias.shape != (vocab_size,):
+            return f"Invalid head bias shape in NumPy checkpoint: {head_bias.shape}"
+        for layer_idx, layer in enumerate(layers):
+            input_size = int(embedding_weight.shape[1]) if layer_idx == 0 else hidden_size
+            expected_ih = (4 * hidden_size, input_size)
+            expected_hh = (4 * hidden_size, hidden_size)
+            if layer["weight_ih"].shape != expected_ih:
+                return f"Invalid weight_ih_l{layer_idx} shape: {layer['weight_ih'].shape}"
+            if layer["weight_hh"].shape != expected_hh:
+                return f"Invalid weight_hh_l{layer_idx} shape: {layer['weight_hh'].shape}"
+            if layer["bias_ih"].shape != (4 * hidden_size,) or layer["bias_hh"].shape != (4 * hidden_size,):
+                return f"Invalid bias shape for LSTM layer {layer_idx}"
+
+        self._numpy_model = {
+            "metadata": metadata,
+            "embedding_weight": embedding_weight,
+            "layers": layers,
+            "head_weight": head_weight,
+            "head_bias": head_bias,
+            "hidden_size": hidden_size,
+            "num_layers": num_layers,
+        }
+        self._vocab_size = int(vocab_size)
+        self._mode = "numpy_lstm"
+        self._load_note = f"source={self.numpy_checkpoint_path}"
         return None
 
     def _build_fallback_sampler(self) -> None:
@@ -1050,6 +1267,133 @@ class KnotSequenceRuntime:
         return np.asarray(out.detach().cpu().numpy(), dtype=np.int64)
 
     @staticmethod
+    def _sigmoid_np(x: np.ndarray) -> np.ndarray:
+        return 1.0 / (1.0 + np.exp(-np.clip(x, -60.0, 60.0)))
+
+    @staticmethod
+    def _lstm_step_np(
+        x: np.ndarray,
+        h_states: list[np.ndarray],
+        c_states: list[np.ndarray],
+        layers: list[Dict[str, np.ndarray]],
+    ) -> tuple[np.ndarray, list[np.ndarray], list[np.ndarray]]:
+        layer_input = x
+        next_h: list[np.ndarray] = []
+        next_c: list[np.ndarray] = []
+        for layer_idx, layer in enumerate(layers):
+            h_prev = h_states[layer_idx]
+            c_prev = c_states[layer_idx]
+            gates = (
+                layer_input @ layer["weight_ih"].T
+                + layer["bias_ih"].reshape(1, -1)
+                + h_prev @ layer["weight_hh"].T
+                + layer["bias_hh"].reshape(1, -1)
+            )
+            i_gate, f_gate, g_gate, o_gate = np.split(gates, 4, axis=1)
+            i_gate = KnotSequenceRuntime._sigmoid_np(i_gate)
+            f_gate = KnotSequenceRuntime._sigmoid_np(f_gate)
+            g_gate = np.tanh(g_gate)
+            o_gate = KnotSequenceRuntime._sigmoid_np(o_gate)
+            c_next = (f_gate * c_prev) + (i_gate * g_gate)
+            h_next = o_gate * np.tanh(c_next)
+            next_h.append(h_next.astype(np.float32, copy=False))
+            next_c.append(c_next.astype(np.float32, copy=False))
+            layer_input = h_next
+        return layer_input, next_h, next_c
+
+    def _sample_from_logits_np(
+        self,
+        logits: np.ndarray,
+        *,
+        rng: np.random.Generator,
+        temperature: float,
+        top_k: int,
+        top_p: float,
+    ) -> np.ndarray:
+        temp = max(float(temperature), 1e-4)
+        if not math.isclose(temp, 1.0):
+            logits = logits / temp
+        logits = logits - np.max(logits, axis=1, keepdims=True)
+        probs = np.exp(logits.astype(np.float64, copy=False))
+        prob_sums = np.sum(probs, axis=1, keepdims=True)
+        probs = probs / np.clip(prob_sums, 1e-12, None)
+
+        tokens_all = np.arange(probs.shape[1], dtype=np.int64)
+        sampled = np.zeros((probs.shape[0],), dtype=np.int64)
+        for row_idx in range(probs.shape[0]):
+            tokens, row_probs = self._apply_temperature_top_k_top_p(
+                tokens_all,
+                probs[row_idx],
+                temperature=1.0,
+                top_k=top_k,
+                top_p=top_p,
+            )
+            sampled[row_idx] = int(rng.choice(tokens, p=row_probs))
+        return sampled
+
+    def _sample_numpy(
+        self,
+        *,
+        length: int,
+        temperature: float,
+        top_k: int,
+        top_p: float,
+        seed: Optional[int],
+    ) -> np.ndarray:
+        return self._sample_numpy_many(
+            length=length,
+            count=1,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            seed=seed,
+        )[0]
+
+    def _sample_numpy_many(
+        self,
+        *,
+        length: int,
+        count: int,
+        temperature: float,
+        top_k: int,
+        top_p: float,
+        seed: Optional[int],
+    ) -> np.ndarray:
+        model = self._numpy_model
+        if model is None:
+            raise RuntimeError("NumPy LSTM runtime is not initialized.")
+
+        n = max(1, int(count))
+        seq_len = max(1, int(length))
+        hidden_size = int(model["hidden_size"])
+        layers = model["layers"]
+        embedding_weight = model["embedding_weight"]
+        head_weight = model["head_weight"]
+        head_bias = model["head_bias"]
+
+        rng = np.random.default_rng(self._seed_to_int(seed))
+        out = np.zeros((n, seq_len), dtype=np.int64)
+        token = np.zeros((n,), dtype=np.int64)
+        h_states = [np.zeros((n, hidden_size), dtype=np.float32) for _ in layers]
+        c_states = [np.zeros((n, hidden_size), dtype=np.float32) for _ in layers]
+
+        for i in range(1, seq_len):
+            x = embedding_weight[token]
+            y, h_states, c_states = self._lstm_step_np(x, h_states, c_states, layers)
+            logits = (y @ head_weight.T) + head_bias.reshape(1, -1)
+            next_token = self._sample_from_logits_np(
+                logits,
+                rng=rng,
+                temperature=float(temperature),
+                top_k=int(top_k),
+                top_p=float(top_p),
+            )
+            out[:, i] = next_token
+            token = next_token
+
+        return out
+
+    @staticmethod
     def _apply_temperature_top_k_top_p(
         tokens: np.ndarray,
         probs: np.ndarray,
@@ -1167,6 +1511,14 @@ class KnotSequenceRuntime:
                 top_p=float(top_p),
                 seed=seed,
             )
+        if self._mode == "numpy_lstm":
+            return self._sample_numpy(
+                length=length,
+                temperature=float(temperature),
+                top_k=int(top_k),
+                top_p=float(top_p),
+                seed=seed,
+            )
 
         return self._sample_fallback(
             length=length,
@@ -1199,6 +1551,15 @@ class KnotSequenceRuntime:
                 top_p=float(top_p),
                 seed=seed,
             )
+        if self._mode == "numpy_lstm":
+            return self._sample_numpy_many(
+                length=length,
+                count=count,
+                temperature=float(temperature),
+                top_k=int(top_k),
+                top_p=float(top_p),
+                seed=seed,
+            )
 
         return self._sample_fallback_many(
             length=length,
@@ -1210,7 +1571,7 @@ class KnotSequenceRuntime:
         )
 
 
-_RUNTIME_CACHE: Dict[tuple[str, str, bool, str], KnotSequenceRuntime] = {}
+_RUNTIME_CACHE: Dict[tuple[str, str, str, bool, str], KnotSequenceRuntime] = {}
 _RUNTIME_CACHE_LOCK = threading.Lock()
 
 
@@ -1221,9 +1582,13 @@ def get_knot_sequence_runtime(
     allow_fallback: bool = True,
     device: str = "auto",
 ) -> KnotSequenceRuntime:
+    resolved_checkpoint_path = resolve_knot_checkpoint_path(checkpoint_path)
+    resolved_numpy_checkpoint_path = resolve_knot_numpy_checkpoint_path(checkpoint_path)
+    resolved_training_mat_path = resolve_knot_training_data_path(training_mat_path)
     key = (
-        str(_resolve_path(checkpoint_path, default_checkpoint_path())),
-        str(_resolve_path(training_mat_path, default_training_mat_path())),
+        str(resolved_checkpoint_path),
+        str(resolved_numpy_checkpoint_path),
+        str(resolved_training_mat_path),
         bool(allow_fallback),
         str(device or "auto").strip().lower(),
     )
@@ -1288,8 +1653,11 @@ def resolve_knot_sequence_runtime_info(
     return {
         "mode": mode,
         "used_pytorch_checkpoint": bool(mode == "pytorch_lstm"),
+        "used_numpy_checkpoint": bool(mode == "numpy_lstm"),
+        "used_learned_sequence_model": bool(mode in {"pytorch_lstm", "numpy_lstm"}),
         "allow_fallback": bool(allow_fallback),
         "checkpoint_path": str(runtime.checkpoint_path),
+        "numpy_checkpoint_path": str(runtime.numpy_checkpoint_path),
         "training_data_path": str(runtime.training_mat_path),
         "load_note": note,
     }
