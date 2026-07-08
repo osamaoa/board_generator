@@ -464,6 +464,19 @@ const buildKnotSequenceIndicator = (raw) => {
       message: `Knot model: HF checkpoint sampler active (${numpyCheckpointName || 'knot_sequence_model.npz'}).`,
     };
   }
+  if (mode === 'hf_configured') {
+    const repo = String(raw.hf_model_repo || '').trim();
+    return {
+      level: 'success',
+      message: `Knot model: HF model repo configured${repo ? ` (${repo})` : ''}.`,
+    };
+  }
+  if (mode === 'local_configured') {
+    return {
+      level: 'info',
+      message: 'Knot model: checkpoint configured; loaded on first generation.',
+    };
+  }
   if (mode === 'fallback_markov') {
     const suffix = note ? ` Reason: ${note}` : '';
     return {

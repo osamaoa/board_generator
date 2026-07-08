@@ -54,7 +54,6 @@ from .core.photorealistic_inference import (
     get_photorealistic_capability,
     preload_photorealistic_model,
 )
-from .core.knot_sequence_model import resolve_knot_sequence_runtime_info
 
 app = FastAPI()
 
@@ -3188,20 +3187,23 @@ def get_capabilities():
         }
     else:
         photorealistic_capability = get_photorealistic_capability()
-    try:
-        knot_sequence_model = resolve_knot_sequence_runtime_info()
-    except Exception as exc:
-        knot_sequence_model = {
-            "mode": "unavailable",
-            "used_pytorch_checkpoint": False,
-            "used_numpy_checkpoint": False,
-            "used_learned_sequence_model": False,
-            "allow_fallback": True,
-            "checkpoint_path": "",
-            "numpy_checkpoint_path": "",
-            "training_data_path": "",
-            "load_note": str(exc),
-        }
+    hf_knot_repo = str(os.environ.get("BOARD_GENERATOR_KNOT_MODEL_REPO", "") or "").strip()
+    knot_sequence_model = {
+        "mode": "hf_configured" if hf_knot_repo else "local_configured",
+        "used_pytorch_checkpoint": False,
+        "used_numpy_checkpoint": False,
+        "used_learned_sequence_model": True,
+        "allow_fallback": True,
+        "checkpoint_path": "",
+        "numpy_checkpoint_path": "",
+        "training_data_path": "",
+        "hf_model_repo": hf_knot_repo,
+        "load_note": (
+            f"HF model repo configured: {hf_knot_repo}. The checkpoint is loaded on first generation."
+            if hf_knot_repo
+            else "Knot sequence checkpoint is loaded on first generation."
+        ),
+    }
     return {
         "photorealistic_export": photorealistic_capability,
         "knot_sequence_model": knot_sequence_model,
