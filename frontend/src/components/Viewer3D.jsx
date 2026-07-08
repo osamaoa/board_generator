@@ -1038,10 +1038,16 @@ const VeneerPanel = ({ veneer, visible, standalone = false }) => {
     const sheetWidthPx = Number(sheet.width_px);
     const sheetHeightPx = Number(sheet.height_px);
     const sheetStyle = Number.isFinite(sheetWidthPx) && Number.isFinite(sheetHeightPx)
-        ? {
-            '--veneer-sheet-width': `${Math.max(64, Math.round(sheetWidthPx))}px`,
-            '--veneer-sheet-height': `${Math.max(32, Math.round(sheetHeightPx))}px`,
-        }
+        ? (() => {
+            const safeWidth = Math.max(64, Math.round(sheetWidthPx));
+            const safeHeight = Math.max(32, Math.round(sheetHeightPx));
+            const displayHeight = Math.min(680, Math.max(safeHeight, Math.round(safeHeight * 2)));
+            return {
+                '--veneer-sheet-width': `${safeWidth}px`,
+                '--veneer-sheet-height': `${safeHeight}px`,
+                '--veneer-sheet-display-height': `${displayHeight}px`,
+            };
+        })()
         : undefined;
 
     return (

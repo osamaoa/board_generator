@@ -29,6 +29,7 @@ const defaultCrookShiftMaxMm = 8000.0;
 const defaultRandomTaperMax = 1.0 / 160.0;
 const defaultManualTaperCoeff = 1.0 / 160.0;
 const veneerModeDefaults = {
+    dead_knots: false,
     display_contours: false,
     display_knots: true,
     display_ring_color: true,
@@ -43,7 +44,7 @@ const veneerModeDefaults = {
     veneer_inner_radius_mm: 20.0,
     veneer_thickness_mm: 3.0,
     veneer_length_mm: 1000.0,
-    veneer_sheet_samples_length: 900,
+    veneer_sheet_samples_length: 2400,
     veneer_sheet_samples_width: 260,
     veneer_fiber_texture_strength: 0.65,
     veneer_fiber_texture_scale_mm: 0.70,
@@ -310,7 +311,7 @@ const ControlPanel = ({
             nextConfig.veneer_inner_radius_mm = Math.max(0, toNumber(nextConfig.veneer_inner_radius_mm, 20.0));
             nextConfig.veneer_thickness_mm = Math.max(1e-6, toNumber(nextConfig.veneer_thickness_mm, 3.0));
             nextConfig.veneer_length_mm = Math.max(0, toNumber(nextConfig.veneer_length_mm, 1000.0));
-            nextConfig.veneer_sheet_samples_length = Math.min(2400, Math.max(64, toInt(nextConfig.veneer_sheet_samples_length, 900)));
+            nextConfig.veneer_sheet_samples_length = Math.max(64, toInt(nextConfig.veneer_sheet_samples_length, 2400));
             nextConfig.veneer_sheet_samples_width = Math.min(1200, Math.max(32, toInt(nextConfig.veneer_sheet_samples_width, 260)));
             nextConfig.veneer_fiber_texture_strength = Math.min(2, Math.max(0, toNumber(nextConfig.veneer_fiber_texture_strength, 0.65)));
             nextConfig.veneer_fiber_texture_scale_mm = Math.max(0.05, toNumber(nextConfig.veneer_fiber_texture_scale_mm, 0.70));
@@ -788,9 +789,8 @@ const ControlPanel = ({
                                         <input
                                             type="number"
                                             min={64}
-                                            max={2400}
                                             step={1}
-                                            value={toInt(config.veneer_sheet_samples_length, 900)}
+                                            value={toInt(config.veneer_sheet_samples_length, 2400)}
                                             onChange={(e) => handleChange('veneer_sheet_samples_length', e.target.value, 'int')}
                                         />
                                     </label>

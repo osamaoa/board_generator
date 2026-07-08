@@ -123,7 +123,7 @@ export const defaultConfig = {
   veneer_inner_radius_mm: 20.0,
   veneer_thickness_mm: 3.0,
   veneer_length_mm: 1000.0,
-  veneer_sheet_samples_length: 900,
+  veneer_sheet_samples_length: 2400,
   veneer_sheet_samples_width: 260,
   veneer_fiber_texture_strength: 0.65,
   veneer_fiber_texture_scale_mm: 0.70,
@@ -172,6 +172,12 @@ export const normalizeLoadedConfig = (raw) => {
     if (Object.prototype.hasOwnProperty.call(candidate, key)) {
       next[key] = candidate[key];
     }
+  }
+  if (
+    Number(next.board_or_log) === 2
+    && !Object.prototype.hasOwnProperty.call(candidate, 'dead_knots')
+  ) {
+    next.dead_knots = false;
   }
 
   const toNumberOr = (value, fallback) => {
@@ -278,9 +284,9 @@ export const normalizeLoadedConfig = (raw) => {
   next.veneer_inner_radius_mm = Math.max(0, toNumberOr(next.veneer_inner_radius_mm, defaultConfig.veneer_inner_radius_mm));
   next.veneer_thickness_mm = Math.max(1e-6, toNumberOr(next.veneer_thickness_mm, defaultConfig.veneer_thickness_mm));
   next.veneer_length_mm = Math.max(0, toNumberOr(next.veneer_length_mm, defaultConfig.veneer_length_mm));
-  next.veneer_sheet_samples_length = Math.min(
-    2400,
-    Math.max(64, Math.floor(toNumberOr(next.veneer_sheet_samples_length, defaultConfig.veneer_sheet_samples_length)))
+  next.veneer_sheet_samples_length = Math.max(
+    64,
+    Math.floor(toNumberOr(next.veneer_sheet_samples_length, defaultConfig.veneer_sheet_samples_length))
   );
   next.veneer_sheet_samples_width = Math.min(
     1200,
@@ -329,9 +335,9 @@ export const normalizeLoadedConfig = (raw) => {
 
 const estimateSimulationDurationMs = (cfg) => {
   if (Number(cfg.board_or_log) === 2) {
-    const pixels = Math.max(1, Number(cfg.veneer_sheet_samples_length) || 900)
+    const pixels = Math.max(1, Number(cfg.veneer_sheet_samples_length) || 2400)
       * Math.max(1, Number(cfg.veneer_sheet_samples_width) || 260);
-    const baselinePixels = 900 * 260;
+    const baselinePixels = 2400 * 260;
     const gpuFactor = cfg.use_gpu ? 1.0 : 1.6;
     let estimate = 1800 + Math.round((pixels / baselinePixels) * 6500 * gpuFactor);
     if (cfg.display_knots) estimate += 700;

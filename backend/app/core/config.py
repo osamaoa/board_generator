@@ -158,7 +158,7 @@ class BoardConfig(BaseModel):
     veneer_inner_radius_mm: float = 20.0
     veneer_thickness_mm: float = 3.0
     veneer_length_mm: float = 1000.0
-    veneer_sheet_samples_length: int = 900
+    veneer_sheet_samples_length: int = 2400
     veneer_sheet_samples_width: int = 260
     veneer_fiber_texture_strength: float = 0.65
     veneer_fiber_texture_scale_mm: float = 0.70

@@ -97,8 +97,10 @@
   width: 100%;
   height: 100%;
   overflow: auto;
-  padding: 12px;
+  padding: 10px;
   background: #e6edf6;
+  display: flex;
+  align-items: center;
 }
 
 .veneer-result-panel.standalone {
@@ -106,11 +108,14 @@
   top: auto;
   left: auto;
   width: 100%;
+  height: auto;
   max-height: none;
-  min-height: 100%;
-  overflow: visible;
+  min-height: 0;
+  overflow: hidden;
   box-shadow: none;
   backdrop-filter: none;
+  display: flex;
+  flex-direction: column;
 }
 
 .veneer-result-header {
@@ -120,6 +125,7 @@
   border-bottom: 1px solid #c7d2dc;
   padding-bottom: 7px;
   margin-bottom: 8px;
+  flex: 0 0 auto;
 }
 
 .veneer-result-header > span {
@@ -159,11 +165,22 @@
   grid-template-columns: minmax(132px, 190px) minmax(260px, 1fr);
   gap: 10px;
   align-items: start;
+  min-height: 0;
+}
+
+.veneer-result-panel.standalone .veneer-result-grid {
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  align-items: stretch;
+  flex: 0 1 auto;
+  height: auto;
 }
 
 .veneer-result-figure {
   margin: 0;
   min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .veneer-result-figure figcaption {
@@ -174,6 +191,7 @@
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--ink-soft);
+  flex: 0 0 auto;
 }
 
 .veneer-result-figure img {
@@ -187,6 +205,7 @@
 .veneer-result-figure.preview img {
   aspect-ratio: 1 / 1;
   object-fit: contain;
+  background: #1f2b36;
 }
 
 .veneer-sheet-frame {
@@ -197,6 +216,13 @@
   border: 1px solid #b7c5d0;
   border-radius: 4px;
   background: #eff4f8;
+  min-height: 0;
+}
+
+.veneer-result-panel.standalone .veneer-sheet-frame {
+  flex: 0 1 auto;
+  height: min(var(--veneer-sheet-display-height, 620px), calc(100vh - 120px));
+  overflow: auto;
 }
 
 .veneer-result-figure.sheet img {
@@ -206,6 +232,11 @@
   border: 0;
   border-radius: 0;
   object-fit: fill;
+}
+
+.veneer-result-panel.standalone .veneer-result-figure.sheet img {
+  width: auto;
+  height: 100%;
 }
 
 .loading-overlay {
@@ -450,7 +481,28 @@
     top: 48px;
   }
 
+  .veneer-only-viewer {
+    overflow: auto;
+    padding: 8px;
+  }
+
+  .veneer-result-panel.standalone {
+    height: auto;
+    min-height: 100%;
+    overflow: visible;
+  }
+
   .veneer-result-grid {
     grid-template-columns: 1fr;
+  }
+
+  .veneer-result-panel.standalone .veneer-result-grid {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+
+  .veneer-result-panel.standalone .veneer-sheet-frame {
+    height: min(60vh, var(--veneer-sheet-display-height, 520px));
+    flex: none;
   }
 }

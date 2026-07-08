@@ -1724,7 +1724,7 @@ def _build_veneer_payload(
         if target_length <= 1e-6:
             return None
 
-        length_samples = max(64, min(2400, int(getattr(config, "veneer_sheet_samples_length", 900) or 900)))
+        length_samples = max(64, int(getattr(config, "veneer_sheet_samples_length", 2400) or 2400))
         width_samples = max(32, min(1200, int(getattr(config, "veneer_sheet_samples_width", 260) or 260)))
         sheet_s = np.linspace(0.0, target_length, length_samples, dtype=np.float32)
         theta = np.interp(sheet_s, arc_dense, theta_dense).astype(np.float32)
@@ -1825,7 +1825,7 @@ def _build_veneer_payload(
         sheet_rgba = np.dstack([image_arr, alpha])
         sheet_img = Image.fromarray(sheet_rgba, mode="RGBA")
         sheet_physical_aspect = max(1e-6, float(target_length) / max(1e-6, float(log_length)))
-        display_height = max(32, min(220, int(width_samples)))
+        display_height = max(32, int(width_samples))
         display_width = max(64, int(round(display_height * sheet_physical_aspect)))
         max_display_width = 9000
         if display_width > max_display_width:
@@ -1843,10 +1843,17 @@ def _build_veneer_payload(
         yy = np.linspace(float(np.max(y_coords)), float(np.min(y_coords)), preview_size, dtype=np.float32)
         px, py = np.meshgrid(xx, yy)
         pz = np.full_like(px, z_max)
-        preview_values = _sample_volume_on_xyz(normalized, mesh, px, py, pz)
-        preview_arr = _colorize_normalized_ring_values(preview_values, stops)
-        preview_alpha = np.where(np.isfinite(preview_values), 255, 36).astype(np.uint8)
-        preview_img = Image.fromarray(np.dstack([preview_arr, preview_alpha]), mode="RGBA")
+        outer_log_field = layers_data.get("last_g")
+        if outer_log_field is not None:
+            preview_outer = _sample_volume_on_xyz(outer_log_field, mesh, px, py, pz)
+            preview_inside = np.isfinite(preview_outer) & (preview_outer <= 0.0)
+        else:
+            preview_values = _sample_volume_on_xyz(normalized, mesh, px, py, pz)
+            preview_inside = np.isfinite(preview_values)
+        preview_arr = np.empty((preview_size, preview_size, 3), dtype=np.uint8)
+        preview_arr[:, :, :] = np.asarray([31, 43, 54], dtype=np.uint8)
+        preview_arr[preview_inside] = np.asarray([244, 247, 242], dtype=np.uint8)
+        preview_img = Image.fromarray(preview_arr, mode="RGB").convert("RGBA")
         preview_draw = ImageDraw.Draw(preview_img)
 
         def to_preview_xy(xv: np.ndarray, yv: np.ndarray) -> List[Tuple[float, float]]:
@@ -1863,8 +1870,8 @@ def _build_veneer_payload(
         preview_radius = np.maximum(preview_radius, inner)
         preview_x = x_center + preview_radius * np.cos(preview_theta)
         preview_y = y_center + preview_radius * np.sin(preview_theta)
-        preview_draw.line(to_preview_xy(preview_x, preview_y), fill=(0, 146, 200, 255), width=3)
-        for rr, color in [(outer, (0, 146, 200, 130)), (inner, (0, 146, 200, 90))]:
+        preview_draw.line(to_preview_xy(preview_x, preview_y), fill=(0, 146, 200, 255), width=4)
+        for rr, color in [(outer, (0, 146, 200, 180)), (inner, (0, 146, 200, 120))]:
             bbox = to_preview_xy(
                 np.asarray([x_center - rr, x_center + rr], dtype=np.float32),
                 np.asarray([y_center + rr, y_center - rr], dtype=np.float32),
@@ -3765,6 +3772,12 @@ def simulate(config: BoardConfig):
         board_mode = mode == 0
         veneer_mode = mode == 2
         export_mode_name = "veneer" if veneer_mode else ("log" if not board_mode else "board")
+        provided_fields = getattr(config, "model_fields_set", None)
+        if provided_fields is None:
+            provided_fields = getattr(config, "__fields_set__", set())
+        provided_fields = provided_fields or set()
+        if veneer_mode and "dead_knots" not in provided_fields:
+            config.dead_knots = False
         if not board_mode:
             config.quiver_or_stream = 0
             if veneer_mode:
