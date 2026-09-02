@@ -830,6 +830,40 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     _add_optional_bool_arg(
         generate,
+        "--knot-seq-context-enabled",
+        "Generate hidden knot-sequence context before and after the visible board.",
+    )
+    generate.add_argument(
+        "--knot-seq-context-before-mm",
+        type=float,
+        default=None,
+        help="Hidden knot-origin context before the visible board in mm (default: 100).",
+    )
+    generate.add_argument(
+        "--knot-seq-context-after-mm",
+        type=float,
+        default=None,
+        help="Hidden knot-origin context after the visible board in mm (default: 100).",
+    )
+    _add_optional_bool_arg(
+        generate,
+        "--knot-axis-calibration-enabled",
+        "Sample correlated knot-axis curvature/rise from an empirical JSON profile.",
+    )
+    generate.add_argument(
+        "--knot-axis-calibration-path",
+        type=str,
+        default=None,
+        help="Path to a schema-v1 empirical dz50/dz100 calibration profile.",
+    )
+    generate.add_argument(
+        "--knot-axis-calibration-mix",
+        type=float,
+        default=None,
+        help="Probability of calibrated geometry per knot; remaining knots use library geometry (default: 0.8).",
+    )
+    _add_optional_bool_arg(
+        generate,
         "--knot-seq-override-c1-c2",
         (
             "Override knot c1/c2 with c1=-1.458e-3 and "
@@ -907,6 +941,23 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Boards per diffusion batch during photorealistic generation (default: 4).",
+    )
+    _add_optional_bool_arg(
+        generate,
+        "--photorealistic-long-face-enabled",
+        "Render long faces at native longitudinal scale and translate overlapping square tiles.",
+    )
+    generate.add_argument(
+        "--photorealistic-tile-length-mm",
+        type=float,
+        default=None,
+        help="Physical longitudinal span represented by one diffusion tile (default: 145 mm).",
+    )
+    generate.add_argument(
+        "--photorealistic-tile-overlap-px",
+        type=int,
+        default=None,
+        help="Overlap between adjacent diffusion tiles before feather blending (default: 64 px).",
     )
     _add_optional_bool_arg(
         generate,
@@ -988,6 +1039,17 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Boards per diffusion batch during photorealistic generation (default: 4).",
+    )
+    _add_optional_bool_arg(
+        regenerate_photo,
+        "--photorealistic-long-face-enabled",
+        "Translate proportionally long conditioning maps as overlapping square tiles.",
+    )
+    regenerate_photo.add_argument(
+        "--photorealistic-tile-overlap-px",
+        type=int,
+        default=None,
+        help="Overlap between adjacent diffusion tiles before feather blending (default: 64 px).",
     )
     _add_optional_bool_arg(
         regenerate_photo,

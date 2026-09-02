@@ -27,6 +27,82 @@ class PhotorealisticInferenceError(RuntimeError):
     """Raised when photorealistic inference fails while generating outputs."""
 
 
+def compute_long_face_tile_starts(
+    image_height: int,
+    tile_size: int,
+    requested_overlap: int,
+) -> list[int]:
+    height = max(1, int(image_height))
+    tile = max(1, int(tile_size))
+    if height <= tile:
+        return [0]
+    overlap = min(tile - 1, max(0, int(requested_overlap)))
+    stride = max(1, tile - overlap)
+    tile_count = max(2, int(np.ceil((height - tile) / stride)) + 1)
+    # Even placement avoids a single oversized overlap at the final tile.
+    return [int(round(value)) for value in np.linspace(0, height - tile, tile_count)]
+
+
+def _png_images(payload: Dict[str, bytes], mode: str = "L") -> Dict[str, Image.Image]:
+    return {
+        key: Image.open(BytesIO(value)).convert(mode).copy()
+        for key, value in payload.items()
+    }
+
+
+def _png_crop(image: Image.Image, *, top: int, tile_size: int) -> bytes:
+    crop = image.crop((0, int(top), image.width, int(top) + int(tile_size)))
+    if crop.size != (int(tile_size), int(tile_size)):
+        crop = crop.resize((int(tile_size), int(tile_size)), resample=Image.BICUBIC)
+    buffer = BytesIO()
+    crop.save(buffer, format="PNG", optimize=False)
+    return buffer.getvalue()
+
+
+def stitch_long_face_tiles(
+    tile_pngs: Sequence[bytes],
+    starts: Sequence[int],
+    *,
+    output_height: int,
+    tile_size: int,
+) -> bytes:
+    if len(tile_pngs) != len(starts) or not tile_pngs:
+        raise PhotorealisticInferenceError("Tile output count does not match tile positions.")
+    tile = int(tile_size)
+    height = int(output_height)
+    accum = np.zeros((height, tile, 3), dtype=np.float32)
+    weight_sum = np.zeros((height, 1, 1), dtype=np.float32)
+    sorted_starts = [int(value) for value in starts]
+
+    for index, (png_bytes, start) in enumerate(zip(tile_pngs, sorted_starts)):
+        image = Image.open(BytesIO(png_bytes)).convert("RGB")
+        if image.size != (tile, tile):
+            image = image.resize((tile, tile), resample=Image.BICUBIC)
+        arr = np.asarray(image, dtype=np.float32)
+        weights = np.ones((tile,), dtype=np.float32)
+        if index > 0:
+            previous_end = sorted_starts[index - 1] + tile
+            overlap = max(0, previous_end - start)
+            if overlap:
+                phase = np.linspace(0.0, 1.0, overlap, dtype=np.float32)
+                weights[:overlap] *= 0.5 - 0.5 * np.cos(np.pi * phase)
+        if index + 1 < len(sorted_starts):
+            next_start = sorted_starts[index + 1]
+            overlap = max(0, start + tile - next_start)
+            if overlap:
+                phase = np.linspace(1.0, 0.0, overlap, dtype=np.float32)
+                weights[-overlap:] *= 0.5 - 0.5 * np.cos(np.pi * phase)
+        end = min(height, start + tile)
+        usable = max(0, end - start)
+        accum[start:end] += arr[:usable] * weights[:usable, None, None]
+        weight_sum[start:end] += weights[:usable, None, None]
+
+    output = np.clip(accum / np.maximum(weight_sum, 1e-6), 0.0, 255.0).astype(np.uint8)
+    buffer = BytesIO()
+    Image.fromarray(output).save(buffer, format="PNG", optimize=False)
+    return buffer.getvalue()
+
+
 @dataclass
 class PhotorealisticDefaults:
     image_size: int = 512
@@ -714,6 +790,8 @@ class _PhotorealisticRuntime:
         include_knot_maps: Optional[bool] = None,
         use_rings_only: Optional[bool] = None,
         boards_per_batch: Optional[int] = None,
+        long_face_enabled: bool = False,
+        tile_overlap_px: int = 64,
     ) -> List[Dict[str, bytes]]:
         self._ensure_loaded()
 
@@ -722,6 +800,17 @@ class _PhotorealisticRuntime:
                 return []
 
             image_size = int(self._defaults.image_size)
+            if bool(long_face_enabled):
+                return self._generate_long_face_batch(
+                    board_inputs,
+                    ddim_steps=ddim_steps,
+                    guidance_scale=guidance_scale,
+                    use_img2img_strength=use_img2img_strength,
+                    include_knot_maps=include_knot_maps,
+                    use_rings_only=use_rings_only,
+                    boards_per_batch=boards_per_batch,
+                    tile_overlap_px=tile_overlap_px,
+                )
             steps, guidance, img2img = self._resolve_inference_params(
                 ddim_steps=ddim_steps,
                 guidance_scale=guidance_scale,
@@ -781,6 +870,82 @@ class _PhotorealisticRuntime:
         except Exception as exc:
             raise PhotorealisticInferenceError(f"Photorealistic inference failed: {exc}") from exc
 
+    def _generate_long_face_batch(
+        self,
+        board_inputs: Sequence[Dict[str, Dict[str, bytes]]],
+        *,
+        ddim_steps: Optional[int],
+        guidance_scale: Optional[float],
+        use_img2img_strength: Optional[float],
+        include_knot_maps: Optional[bool],
+        use_rings_only: Optional[bool],
+        boards_per_batch: Optional[int],
+        tile_overlap_px: int,
+    ) -> List[Dict[str, bytes]]:
+        tile_size = int(self._defaults.image_size)
+        flat_inputs: list[Dict[str, Dict[str, bytes]]] = []
+        board_layout: list[tuple[list[int], int, int]] = []
+        for board in board_inputs:
+            ring_images = _png_images(board.get("rings") or {})
+            if "rings_1" not in ring_images:
+                raise PhotorealisticInferenceError("Missing required input image: rings_1.")
+            width, height = ring_images["rings_1"].size
+            if width != tile_size:
+                raise PhotorealisticInferenceError(
+                    f"Long-face conditioning width must be {tile_size}px, got {width}px."
+                )
+            starts = compute_long_face_tile_starts(height, tile_size, tile_overlap_px)
+            fiber_images = _png_images(board.get("fibers") or {})
+            knot_images = _png_images(board.get("knot_maps") or board.get("knots") or {})
+            start_index = len(flat_inputs)
+            for top in starts:
+                tile_board: Dict[str, Dict[str, bytes]] = {
+                    "rings": {
+                        key: _png_crop(value, top=top, tile_size=tile_size)
+                        for key, value in ring_images.items()
+                    }
+                }
+                if fiber_images:
+                    tile_board["fibers"] = {
+                        key: _png_crop(value, top=top, tile_size=tile_size)
+                        for key, value in fiber_images.items()
+                    }
+                if knot_images:
+                    tile_board["knot_maps"] = {
+                        key: _png_crop(value, top=top, tile_size=tile_size)
+                        for key, value in knot_images.items()
+                    }
+                flat_inputs.append(tile_board)
+            board_layout.append((starts, height, start_index))
+
+        generated_tiles = self.generate_batch(
+            flat_inputs,
+            ddim_steps=ddim_steps,
+            guidance_scale=guidance_scale,
+            use_img2img_strength=use_img2img_strength,
+            include_knot_maps=include_knot_maps,
+            use_rings_only=use_rings_only,
+            boards_per_batch=boards_per_batch,
+            long_face_enabled=False,
+        )
+        outputs: list[Dict[str, bytes]] = []
+        for starts, height, start_index in board_layout:
+            board_output: Dict[str, bytes] = {}
+            for face_index in range(1, 5):
+                key = f"surface_{face_index}"
+                tiles = [
+                    generated_tiles[start_index + offset][key]
+                    for offset in range(len(starts))
+                ]
+                board_output[key] = stitch_long_face_tiles(
+                    tiles,
+                    starts,
+                    output_height=height,
+                    tile_size=tile_size,
+                )
+            outputs.append(board_output)
+        return outputs
+
     def generate(
         self,
         ring_pngs: Dict[str, bytes],
@@ -791,6 +956,8 @@ class _PhotorealisticRuntime:
         use_img2img_strength: Optional[float] = None,
         include_knot_maps: Optional[bool] = None,
         use_rings_only: Optional[bool] = None,
+        long_face_enabled: bool = False,
+        tile_overlap_px: int = 64,
     ) -> Dict[str, bytes]:
         outputs = self.generate_batch(
             [{"rings": ring_pngs, "fibers": fiber_pngs or {}}],
@@ -800,6 +967,8 @@ class _PhotorealisticRuntime:
             include_knot_maps=include_knot_maps,
             use_rings_only=use_rings_only,
             boards_per_batch=1,
+            long_face_enabled=long_face_enabled,
+            tile_overlap_px=tile_overlap_px,
         )
         if not outputs:
             raise PhotorealisticInferenceError("Photorealistic inference returned no output.")
@@ -826,6 +995,8 @@ def generate_photorealistic_surfaces(
     use_img2img_strength: Optional[float] = None,
     include_knot_maps: Optional[bool] = None,
     use_rings_only: Optional[bool] = None,
+    long_face_enabled: bool = False,
+    tile_overlap_px: int = 64,
 ) -> Dict[str, bytes]:
     return _RUNTIME.generate(
         ring_pngs,
@@ -835,6 +1006,8 @@ def generate_photorealistic_surfaces(
         use_img2img_strength=use_img2img_strength,
         include_knot_maps=include_knot_maps,
         use_rings_only=use_rings_only,
+        long_face_enabled=long_face_enabled,
+        tile_overlap_px=tile_overlap_px,
     )
 
 
@@ -847,6 +1020,8 @@ def generate_photorealistic_surfaces_batch(
     include_knot_maps: Optional[bool] = None,
     use_rings_only: Optional[bool] = None,
     boards_per_batch: Optional[int] = None,
+    long_face_enabled: bool = False,
+    tile_overlap_px: int = 64,
 ) -> List[Dict[str, bytes]]:
     return _RUNTIME.generate_batch(
         board_inputs,
@@ -856,4 +1031,6 @@ def generate_photorealistic_surfaces_batch(
         include_knot_maps=include_knot_maps,
         use_rings_only=use_rings_only,
         boards_per_batch=boards_per_batch,
+        long_face_enabled=long_face_enabled,
+        tile_overlap_px=tile_overlap_px,
     )

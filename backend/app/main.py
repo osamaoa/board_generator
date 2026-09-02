@@ -169,6 +169,9 @@ class ExportPhotorealisticRequest(BaseModel):
     include_knot_maps: Optional[bool] = None
     use_rings_only: Optional[bool] = None
     include_base64: Optional[bool] = None
+    long_face_enabled: Optional[bool] = None
+    tile_length_mm: Optional[float] = None
+    tile_overlap_px: Optional[int] = None
 
 
 class RenderRingColorOverlaysRequest(BaseModel):
@@ -295,10 +298,15 @@ def _surface_meta_matlab_model(board_dims: Dict[str, Any]) -> Dict[str, Dict[str
 def _render_surface_png_matlab(
     lines: List[np.ndarray],
     surf_meta: Dict[str, Any],
-    size: int = 512,
+    size: Any = 512,
     line_width: float = 1.0,
 ) -> bytes:
-    image = Image.new("L", (size, size), color=255)
+    if isinstance(size, (tuple, list)) and len(size) >= 2:
+        width_px_out = max(1, int(size[0]))
+        height_px_out = max(1, int(size[1]))
+    else:
+        width_px_out = height_px_out = max(1, int(size))
+    image = Image.new("L", (width_px_out, height_px_out), color=255)
     draw = ImageDraw.Draw(image)
     u_axis = int(surf_meta["u_axis"])
     v_axis = int(surf_meta["v_axis"])
@@ -313,10 +321,10 @@ def _render_surface_png_matlab(
 
         u_span = max(1e-9, float(surf_meta["u_max"] - surf_meta["u_min"]))
         v_span = max(1e-9, float(surf_meta["v_max"] - surf_meta["v_min"]))
-        x = np.rint(_clamp01((u - float(surf_meta["u_min"])) / u_span) * (size - 1)).astype(np.int32)
-        y = np.rint((1.0 - _clamp01((v - float(surf_meta["v_min"])) / v_span)) * (size - 1)).astype(np.int32)
+        x = np.rint(_clamp01((u - float(surf_meta["u_min"])) / u_span) * (width_px_out - 1)).astype(np.int32)
+        y = np.rint((1.0 - _clamp01((v - float(surf_meta["v_min"])) / v_span)) * (height_px_out - 1)).astype(np.int32)
         if flip_x:
-            x = (size - 1) - x
+            x = (width_px_out - 1) - x
         draw.line([tuple(pt) for pt in np.column_stack([x, y]).tolist()], fill=0, width=width_px)
 
     png_buffer = BytesIO()
@@ -1946,7 +1954,7 @@ def _build_matlab_ring_pngs(
     contours_mat: List[Any],
     board_dims: Dict[str, Any],
     *,
-    size: int = 512,
+    size: Any = 512,
     line_width: float = 1.0,
 ) -> Dict[str, bytes]:
     face_meta = _surface_meta_matlab_model(board_dims)
@@ -1982,7 +1990,7 @@ def _build_matlab_mid_ring_png(
     contours_mid_mat: List[Any],
     board_dims: Dict[str, Any],
     *,
-    size: int = 512,
+    size: Any = 512,
     line_width: float = 1.0,
 ) -> bytes:
     face_meta = _surface_meta_matlab_model(board_dims)
@@ -2772,14 +2780,19 @@ def _render_fiber_face_png(
     *,
     flip_sign: bool,
     flip_x: bool,
-    size: int = 512,
+    size: Any = 512,
 ) -> bytes:
     x = np.asarray(x_face, dtype=np.float64)
     y = np.asarray(y_face, dtype=np.float64)
     fx = np.asarray(fx_face, dtype=np.float64)
     fy = np.asarray(fy_face, dtype=np.float64)
 
-    img = np.full((size, size), 1.0, dtype=np.float64)
+    if isinstance(size, (tuple, list)) and len(size) >= 2:
+        width_px_out = max(1, int(size[0]))
+        height_px_out = max(1, int(size[1]))
+    else:
+        width_px_out = height_px_out = max(1, int(size))
+    img = np.full((height_px_out, width_px_out), 1.0, dtype=np.float64)
     if x.shape != y.shape or x.shape != fx.shape or x.shape != fy.shape:
         image = Image.fromarray(np.rint(img * 255.0).astype(np.uint8), mode="L")
         buffer = BytesIO()
@@ -2794,8 +2807,8 @@ def _render_fiber_face_png(
         x_min, x_max = float(np.min(points[:, 0])), float(np.max(points[:, 0]))
         y_min, y_max = float(np.min(points[:, 1])), float(np.max(points[:, 1]))
         if x_max > x_min and y_max > y_min:
-            xi = np.linspace(x_min, x_max, size, dtype=np.float64)
-            yi = np.linspace(y_min, y_max, size, dtype=np.float64)
+            xi = np.linspace(x_min, x_max, width_px_out, dtype=np.float64)
+            yi = np.linspace(y_min, y_max, height_px_out, dtype=np.float64)
             XI, YI = np.meshgrid(xi, yi, indexing="xy")
             interp = griddata(points, values, (XI, YI), method="linear")
             if np.isnan(interp).any():
@@ -2824,7 +2837,7 @@ def _build_fiber_surface_pngs(
     rand_fibers: bool = False,
     out_of_plane_threshold: float = 0.75,
     snr: float = 0.9,
-    size: int = 512,
+    size: Any = 512,
 ) -> Dict[str, bytes]:
     # Arrays are MATLAB-coordinate fields with shape (ny, nx, nz):
     # X=width, Y=thickness, Z=length.
@@ -3048,6 +3061,7 @@ def _build_matlab_bundle_png_payload(
     show_inside: bool = False,
     include_middle_surface: bool = False,
     image_size: int = 512,
+    image_height: Optional[int] = None,
     rand_fibers: bool = False,
     out_of_plane_threshold: float = 0.75,
     snr: float = 0.9,
@@ -3076,7 +3090,13 @@ def _build_matlab_bundle_png_payload(
     if not contours_mat:
         raise HTTPException(status_code=400, detail="No contour data available in cached simulation.")
 
-    render_size = max(32, int(image_size))
+    render_width = max(32, int(image_size))
+    render_height = max(32, int(image_height if image_height is not None else image_size))
+    render_size: Any = (
+        (render_width, render_height)
+        if render_height != render_width
+        else render_width
+    )
 
     ring_pngs = _build_matlab_ring_pngs(
         contours_mat,
@@ -3655,12 +3675,24 @@ def export_photorealistic_surfaces(req: ExportPhotorealisticRequest):
         imid = int(req.imid) if req.imid is not None else 1
         use_rings_only = bool(req.use_rings_only) if req.use_rings_only is not None else False
         include_knot_maps = bool(req.include_knot_maps) if req.include_knot_maps is not None else False
+        long_face_enabled = bool(req.long_face_enabled) if req.long_face_enabled is not None else False
+        tile_length_mm = max(1.0, float(req.tile_length_mm) if req.tile_length_mm is not None else 145.0)
+        tile_overlap_px = max(0, int(req.tile_overlap_px) if req.tile_overlap_px is not None else 64)
         if bool(use_rings_only) and bool(include_knot_maps):
             raise HTTPException(
                 status_code=400,
                 detail="use_rings_only=true cannot be combined with include_knot_maps=true.",
             )
 
+        board_dims = entry.get("board_dimensions") or {}
+        board_length_mm = abs(
+            float(board_dims.get("z_max", 145.0)) - float(board_dims.get("z_min", 0.0))
+        )
+        long_face_height = (
+            max(512, int(round(512.0 * board_length_mm / tile_length_mm)))
+            if long_face_enabled
+            else 512
+        )
         payload = _build_matlab_bundle_png_payload(
             entry,
             show_inside=show_inside,
@@ -3675,6 +3707,8 @@ def export_photorealistic_surfaces(req: ExportPhotorealisticRequest):
             fiber_irregularity_strength=fiber_irregularity_strength,
             imid=imid,
             use_rings_only=use_rings_only,
+            image_size=512,
+            image_height=long_face_height,
         )
 
         generated = generate_photorealistic_surfaces(
@@ -3685,6 +3719,8 @@ def export_photorealistic_surfaces(req: ExportPhotorealisticRequest):
             use_img2img_strength=req.use_img2img_strength,
             include_knot_maps=include_knot_maps,
             use_rings_only=use_rings_only,
+            long_face_enabled=long_face_enabled,
+            tile_overlap_px=tile_overlap_px,
         )
 
         # surface_1..4 follow MATLAB-like side order:

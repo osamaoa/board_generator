@@ -99,6 +99,12 @@ export const defaultConfig = {
   knot_sequence_top_p: 0.80,
   knot_dictionary_jitter: 0.0,
   knot_sequence_override_c1_c2: true,
+  knot_sequence_context_enabled: false,
+  knot_sequence_context_before_mm: 100.0,
+  knot_sequence_context_after_mm: 100.0,
+  knot_axis_calibration_enabled: false,
+  knot_axis_calibration_path: '',
+  knot_axis_calibration_mix: 0.8,
   display_rings: false,
   display_knots: true,
   display_knot_slots: false,
@@ -154,6 +160,9 @@ export const defaultConfig = {
   photorealistic_include_knot_maps: false,
   photorealistic_use_rings_only: false,
   photorealistic_steps: 50,
+  photorealistic_long_face_enabled: false,
+  photorealistic_tile_length_mm: 145.0,
+  photorealistic_tile_overlap_px: 64,
   imid: 1,
   save_rings: false,
   save_fibers: false
@@ -322,6 +331,24 @@ export const normalizeLoadedConfig = (raw) => {
     next.knot_sequence_override_c1_c2,
     defaultConfig.knot_sequence_override_c1_c2
   );
+  next.knot_sequence_context_enabled = toBoolOr(
+    next.knot_sequence_context_enabled,
+    defaultConfig.knot_sequence_context_enabled
+  );
+  next.knot_sequence_context_before_mm = Math.max(0, toNumberOr(next.knot_sequence_context_before_mm, 100));
+  next.knot_sequence_context_after_mm = Math.max(0, toNumberOr(next.knot_sequence_context_after_mm, 100));
+  next.knot_axis_calibration_enabled = toBoolOr(
+    next.knot_axis_calibration_enabled,
+    defaultConfig.knot_axis_calibration_enabled
+  );
+  next.knot_axis_calibration_path = String(next.knot_axis_calibration_path || '');
+  next.knot_axis_calibration_mix = Math.min(1, Math.max(0, toNumberOr(next.knot_axis_calibration_mix, 0.8)));
+  next.photorealistic_long_face_enabled = toBoolOr(
+    next.photorealistic_long_face_enabled,
+    defaultConfig.photorealistic_long_face_enabled
+  );
+  next.photorealistic_tile_length_mm = Math.max(1, toNumberOr(next.photorealistic_tile_length_mm, 145));
+  next.photorealistic_tile_overlap_px = Math.max(0, Math.floor(toNumberOr(next.photorealistic_tile_overlap_px, 64)));
 
   const loadedKnots = Array.isArray(next.input_knots) ? next.input_knots : [];
   const normalizedKnots = loadedKnots.map((knot) => ({ ...defaultInputKnot, ...(knot || {}) }));
@@ -682,6 +709,9 @@ function App() {
     include_knot_maps: !!config.photorealistic_include_knot_maps && !config.photorealistic_use_rings_only,
     use_rings_only: !!config.photorealistic_use_rings_only,
     ddim_steps: Math.max(1, Math.floor(Number(config.photorealistic_steps) || 1)),
+    long_face_enabled: !!config.photorealistic_long_face_enabled,
+    tile_length_mm: Math.max(1, Number(config.photorealistic_tile_length_mm) || 145),
+    tile_overlap_px: Math.max(0, Math.floor(Number(config.photorealistic_tile_overlap_px) || 0)),
   });
 
   const handleSimulate = async () => {

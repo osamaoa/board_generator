@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.io
 import os
+import json
 from typing import List
 from .config import BoardConfig
 from .array_backend import get_xp, gpu_enabled, to_numpy
@@ -15,8 +16,35 @@ try:
 except Exception:
     cKDTree = None
 
+
+def resolve_knot_sequence_layout(
+    *,
+    board_length_mm: float,
+    dz_mm: float,
+    visible_z_min_mm: float,
+    context_enabled: bool,
+    context_before_mm: float,
+    context_after_mm: float,
+) -> dict:
+    dz = max(1e-9, float(dz_mm))
+    visible_slots = max(1, int(float(board_length_mm) / dz))
+    before_slots = int(np.ceil(max(0.0, float(context_before_mm)) / dz)) if context_enabled else 0
+    after_slots = int(np.ceil(max(0.0, float(context_after_mm)) / dz)) if context_enabled else 0
+    sequence_z_min = float(visible_z_min_mm) - before_slots * dz
+    slot_count = visible_slots + before_slots + after_slots
+    slot_z_positions = sequence_z_min + np.arange(1, slot_count + 1, dtype=np.float64) * dz
+    return {
+        "visible_slot_count": int(visible_slots),
+        "context_before_slots": int(before_slots),
+        "context_after_slots": int(after_slots),
+        "slot_count": int(slot_count),
+        "sequence_z_min_mm": float(sequence_z_min),
+        "slot_z_positions_mm": slot_z_positions,
+    }
+
 class KnotSystem:
     _mat_cache = {}
+    _axis_calibration_cache = {}
     _cross_section_generator = None
     _OVERRIDE_C1_VALUE = -1.458e-3
     _OVERRIDE_AX100_MIN = 32.7
@@ -177,6 +205,88 @@ class KnotSystem:
         k_c1 = np.full((n_knots,), float(cls._OVERRIDE_C1_VALUE), dtype=np.float64)
         k_c2 = (9.7e-3 * ax100) + 0.1725
         return k_c1, np.asarray(k_c2, dtype=np.float64)
+
+    @classmethod
+    def _load_axis_calibration_profile(cls, profile_path: str) -> dict:
+        path = os.path.abspath(os.path.expanduser(str(profile_path or "").strip()))
+        if not path:
+            raise RuntimeError(
+                "knot_axis_calibration_enabled=true requires knot_axis_calibration_path."
+            )
+        cached = cls._axis_calibration_cache.get(path)
+        if cached is not None:
+            return cached
+        if not os.path.isfile(path):
+            raise RuntimeError(f"Knot-axis calibration profile does not exist: {path}")
+        with open(path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        if int(payload.get("schema_version", 0)) != 1:
+            raise RuntimeError(f"Unsupported knot-axis calibration profile: {path}")
+        observations = payload.get("observations")
+        if not isinstance(observations, list) or not observations:
+            raise RuntimeError(f"Knot-axis calibration profile has no observations: {path}")
+        cls._axis_calibration_cache[path] = payload
+        return payload
+
+    @classmethod
+    def _sample_calibrated_knot_axis_coefficients(
+        cls,
+        knot_count: int,
+        *,
+        profile_path: str,
+        source_c1: np.ndarray,
+        source_c2: np.ndarray,
+        calibrated_mix: float,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        n_knots = max(0, int(knot_count))
+        source_c1 = np.asarray(source_c1, dtype=np.float64).reshape(-1)
+        source_c2 = np.asarray(source_c2, dtype=np.float64).reshape(-1)
+        if source_c1.size != n_knots or source_c2.size != n_knots:
+            raise RuntimeError("Source c1/c2 arrays do not match knot count.")
+        if n_knots == 0:
+            empty = np.zeros((0,), dtype=np.float64)
+            return empty, empty, np.zeros((0,), dtype=bool)
+
+        profile = cls._load_axis_calibration_profile(profile_path)
+        pairs = []
+        for item in profile["observations"]:
+            try:
+                dz50 = float(item["dz50_mm"])
+                dz100 = float(item["dz100_mm"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if np.isfinite(dz50) and np.isfinite(dz100):
+                pairs.append((dz50, dz100))
+        if not pairs:
+            raise RuntimeError("Knot-axis calibration profile has no finite dz50/dz100 pairs.")
+
+        sampling = profile.get("sampling") or {}
+        jitter50 = max(0.0, float(sampling.get("jitter_std_dz50_mm", 1.5)))
+        jitter100 = max(0.0, float(sampling.get("jitter_std_dz100_mm", 3.0)))
+        c1_min = float(sampling.get("c1_min", -0.0040))
+        c1_max = float(sampling.get("c1_max", 0.0010))
+        c2_min = float(sampling.get("c2_min", -0.10))
+        c2_max = float(sampling.get("c2_max", 0.90))
+
+        mix = float(np.clip(calibrated_mix, 0.0, 1.0))
+        calibrated = np.random.random(n_knots) < mix
+        out_c1 = source_c1.copy()
+        out_c2 = source_c2.copy()
+        count = int(np.count_nonzero(calibrated))
+        if count:
+            pair_arr = np.asarray(pairs, dtype=np.float64)
+            selected = pair_arr[np.random.randint(0, pair_arr.shape[0], size=count)].copy()
+            if jitter50 > 0.0:
+                selected[:, 0] += np.random.normal(0.0, jitter50, size=count)
+            if jitter100 > 0.0:
+                selected[:, 1] += np.random.normal(0.0, jitter100, size=count)
+            dz50 = selected[:, 0]
+            dz100 = selected[:, 1]
+            sampled_c1 = (dz100 - (2.0 * dz50)) / 5000.0
+            sampled_c2 = (dz50 - (2500.0 * sampled_c1)) / 50.0
+            out_c1[calibrated] = np.clip(sampled_c1, c1_min, c1_max)
+            out_c2[calibrated] = np.clip(sampled_c2, c2_min, c2_max)
+        return out_c1, out_c2, calibrated
 
     @staticmethod
     def _apply_dictionary_jitter(data: np.ndarray, jitter_scale: float) -> np.ndarray:
@@ -408,12 +518,23 @@ class KnotSystem:
             self._set_empty_knot_parameters()
             return
 
+        source_c1 = np.asarray([k.c1 for k in knots], dtype=float)
+        source_c2 = np.asarray([k.c2 for k in knots], dtype=float)
+        calibration_enabled = bool(getattr(p, "knot_axis_calibration_enabled", False))
         override_c1_c2 = bool(getattr(p, "knot_sequence_override_c1_c2", False))
-        if override_c1_c2:
+        if calibration_enabled:
+            k_c1, k_c2, _ = self._sample_calibrated_knot_axis_coefficients(
+                len(knots),
+                profile_path=str(getattr(p, "knot_axis_calibration_path", "") or ""),
+                source_c1=source_c1,
+                source_c2=source_c2,
+                calibrated_mix=float(getattr(p, "knot_axis_calibration_mix", 0.8)),
+            )
+        elif override_c1_c2:
             k_c1, k_c2 = self._sample_override_knot_axis_coefficients(len(knots))
         else:
-            k_c1 = np.asarray([k.c1 for k in knots], dtype=float)
-            k_c2 = np.asarray([k.c2 for k in knots], dtype=float)
+            k_c1 = source_c1
+            k_c2 = source_c2
 
         self._store_knot_parameters(
             [k.th0_deg for k in knots],
@@ -645,6 +766,11 @@ class KnotSystem:
         override_c1_value = float(self._OVERRIDE_C1_VALUE)
         override_ax100_min = float(self._OVERRIDE_AX100_MIN)
         override_ax100_max = float(self._OVERRIDE_AX100_MAX)
+        axis_calibration_enabled = bool(getattr(p, "knot_axis_calibration_enabled", False))
+        axis_calibration_path = str(getattr(p, "knot_axis_calibration_path", "") or "")
+        axis_calibration_mix = float(
+            np.clip(getattr(p, "knot_axis_calibration_mix", 0.8), 0.0, 1.0)
+        )
 
         if p.use_input_knots:
             self.knot_sequence_info = {
@@ -654,9 +780,13 @@ class KnotSystem:
                 "checkpoint_path": "",
                 "training_data_path": "",
                 "load_note": (
-                    "Manual knots enabled; sequence model not used. c1/c2 override active."
-                    if override_c1_c2
-                    else "Manual knots enabled; sequence model not used."
+                    "Manual knots enabled; empirical axis calibration active."
+                    if axis_calibration_enabled
+                    else (
+                        "Manual knots enabled; sequence model not used. c1/c2 override active."
+                        if override_c1_c2
+                        else "Manual knots enabled; sequence model not used."
+                    )
                 ),
                 "sample_length": 0,
                 "slot_count": 0,
@@ -666,6 +796,9 @@ class KnotSystem:
                     float(override_ax100_min),
                     float(override_ax100_max),
                 ],
+                "knot_axis_calibration_enabled": bool(axis_calibration_enabled),
+                "knot_axis_calibration_path": str(axis_calibration_path),
+                "knot_axis_calibration_mix": float(axis_calibration_mix),
                 "dz_mm": 0.0,
                 "z_min_mm": 0.0,
                 "slot_tokens": [],
@@ -706,10 +839,33 @@ class KnotSystem:
         bad_knots = np.asarray(d_bad['bad_knots'][0], dtype=np.int64)
         bad_knots_set = set(int(v) for v in bad_knots.tolist())
         
-        # 1. Generate a fresh random knot sequence that matches board length
-        # (floored to dz slots), retrying when sampled knots intersect each other.
+        # 1. Generate a fresh random knot sequence. Optional axial context is
+        # represented by slots outside the visible board, while the mesh and
+        # exported board extents remain unchanged.
         board_length = p.board_length_mm()
-        slot_count = max(1, int(board_length / float(dz)))
+        context_enabled = bool(getattr(p, "knot_sequence_context_enabled", False))
+        context_before_mm = (
+            max(0.0, float(getattr(p, "knot_sequence_context_before_mm", 100.0)))
+            if context_enabled
+            else 0.0
+        )
+        context_after_mm = (
+            max(0.0, float(getattr(p, "knot_sequence_context_after_mm", 100.0)))
+            if context_enabled
+            else 0.0
+        )
+        layout = resolve_knot_sequence_layout(
+            board_length_mm=board_length,
+            dz_mm=float(dz),
+            visible_z_min_mm=float(p.z_extent()[0]),
+            context_enabled=context_enabled,
+            context_before_mm=context_before_mm,
+            context_after_mm=context_after_mm,
+        )
+        visible_slot_count = int(layout["visible_slot_count"])
+        context_before_slots = int(layout["context_before_slots"])
+        context_after_slots = int(layout["context_after_slots"])
+        slot_count = int(layout["slot_count"])
         checkpoint_path = str(getattr(p, "knot_sequence_checkpoint_path", "") or "")
         allow_fallback = bool(getattr(p, "knot_sequence_allow_fallback", True))
         top_k = max(0, int(getattr(p, "knot_sequence_top_k", 0)))
@@ -733,7 +889,8 @@ class KnotSystem:
             allow_fallback=allow_fallback,
         )
 
-        z_min, _ = p.z_extent()
+        z_min, z_max = p.z_extent()
+        sequence_z_min = float(layout["sequence_z_min_mm"])
         overlap_rejected_attempts = 0
         empty_candidate_attempts = 0
         last_sample_length = 0
@@ -764,7 +921,7 @@ class KnotSystem:
 
             # Map each sequence element to its fixed axial location.
             # Zero elements represent an empty dz slot and are removed later.
-            slot_z_pos = z_min + (np.arange(1, len(knot_seq_window) + 1) * float(dz))
+            slot_z_pos = np.asarray(layout["slot_z_positions_mm"], dtype=np.float64)
 
             knot_ids: list[int] = []
             knot_slot_indices: list[int] = []
@@ -836,7 +993,16 @@ class KnotSystem:
             k_a2 = np.asarray(Data[:, 4], dtype=float)
             k_a3 = np.asarray(Data[:, 5], dtype=float)
             k_a4 = np.asarray(Data[:, 6], dtype=float)
-            if override_c1_c2:
+            calibrated_mask = np.zeros((Data.shape[0],), dtype=bool)
+            if axis_calibration_enabled:
+                k_c1, k_c2, calibrated_mask = self._sample_calibrated_knot_axis_coefficients(
+                    Data.shape[0],
+                    profile_path=axis_calibration_path,
+                    source_c1=np.asarray(Data[:, 7], dtype=float),
+                    source_c2=np.asarray(Data[:, 8], dtype=float),
+                    calibrated_mix=axis_calibration_mix,
+                )
+            elif override_c1_c2:
                 k_c1, k_c2 = self._sample_override_knot_axis_coefficients(Data.shape[0])
             else:
                 k_c1 = np.asarray(Data[:, 7], dtype=float)
@@ -886,7 +1052,17 @@ class KnotSystem:
                 "slot_has_knot": slot_has_knot,
                 "slot_knot_ids": slot_knot_ids,
                 "dz_mm": float(dz),
-                "z_min_mm": float(z_min),
+                "z_min_mm": float(sequence_z_min),
+                "sequence_z_min_mm": float(sequence_z_min),
+                "visible_z_min_mm": float(z_min),
+                "visible_z_max_mm": float(z_max),
+                "visible_slot_count": int(visible_slot_count),
+                "context_enabled": bool(context_enabled),
+                "context_before_slots": int(context_before_slots),
+                "context_after_slots": int(context_after_slots),
+                "context_before_mm": float(context_before_slots * float(dz)),
+                "context_after_mm": float(context_after_slots * float(dz)),
+                "axis_calibrated_mask": calibrated_mask,
                 "overlap_pair_count": int(overlap_pair_count),
             }
             if best_payload is None or int(candidate["overlap_pair_count"]) < int(best_payload["overlap_pair_count"]):
@@ -926,8 +1102,18 @@ class KnotSystem:
                     float(override_ax100_min),
                     float(override_ax100_max),
                 ],
+                "knot_axis_calibration_enabled": bool(axis_calibration_enabled),
+                "knot_axis_calibration_path": str(axis_calibration_path),
+                "knot_axis_calibration_mix": float(axis_calibration_mix),
+                "knot_axis_calibrated_count": 0,
+                "context_enabled": bool(context_enabled),
+                "context_before_mm": float(context_before_slots * float(dz)),
+                "context_after_mm": float(context_after_slots * float(dz)),
+                "visible_z_min_mm": float(z_min),
+                "visible_z_max_mm": float(z_max),
+                "visible_slot_count": int(visible_slot_count),
                 "dz_mm": float(dz),
-                "z_min_mm": float(z_min),
+                "z_min_mm": float(sequence_z_min),
                 "slot_tokens": [0] * int(slot_count),
                 "slot_has_knot": [0] * int(slot_count),
                 "slot_knot_ids": [0] * int(slot_count),
@@ -972,8 +1158,22 @@ class KnotSystem:
                 float(override_ax100_min),
                 float(override_ax100_max),
             ],
+            "knot_axis_calibration_enabled": bool(axis_calibration_enabled),
+            "knot_axis_calibration_path": str(axis_calibration_path),
+            "knot_axis_calibration_mix": float(axis_calibration_mix),
+            "knot_axis_calibrated_count": int(
+                np.count_nonzero(selected_payload.get("axis_calibrated_mask", []))
+            ),
+            "context_enabled": bool(selected_payload.get("context_enabled", False)),
+            "context_before_mm": float(selected_payload.get("context_before_mm", 0.0)),
+            "context_after_mm": float(selected_payload.get("context_after_mm", 0.0)),
+            "visible_z_min_mm": float(selected_payload.get("visible_z_min_mm", z_min)),
+            "visible_z_max_mm": float(selected_payload.get("visible_z_max_mm", z_max)),
+            "visible_slot_count": int(
+                selected_payload.get("visible_slot_count", visible_slot_count)
+            ),
             "dz_mm": float(selected_payload.get("dz_mm", float(dz))),
-            "z_min_mm": float(selected_payload.get("z_min_mm", float(z_min))),
+            "z_min_mm": float(selected_payload.get("z_min_mm", float(sequence_z_min))),
             "slot_tokens": np.asarray(
                 selected_payload.get("slot_tokens", np.zeros((int(slot_count),), dtype=np.int64)),
                 dtype=np.int64,

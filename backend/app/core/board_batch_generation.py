@@ -110,6 +110,15 @@ _RELEVANT_CONFIG_KEYS = {
     "knot_sequence_intersection_max_attempts",
     "knot_dictionary_jitter",
     "knot_sequence_override_c1_c2",
+    "knot_sequence_context_enabled",
+    "knot_sequence_context_before_mm",
+    "knot_sequence_context_after_mm",
+    "knot_axis_calibration_enabled",
+    "knot_axis_calibration_path",
+    "knot_axis_calibration_mix",
+    "photorealistic_long_face_enabled",
+    "photorealistic_tile_length_mm",
+    "photorealistic_tile_overlap_px",
     # Fiber controls used for image export
     "calc_fibers_a0_method",
     "knot_fiber_field_override",
@@ -1108,6 +1117,10 @@ def _normalize_generation_config(
     ov("knot_sequence_checkpoint_path", args.knot_seq_checkpoint_path)
     ov("knot_sequence_training_data_path", args.knot_seq_training_data_path)
     ov("knot_dictionary_jitter", args.knot_dictionary_jitter)
+    ov("knot_sequence_context_before_mm", args.knot_seq_context_before_mm)
+    ov("knot_sequence_context_after_mm", args.knot_seq_context_after_mm)
+    ov("knot_axis_calibration_path", args.knot_axis_calibration_path)
+    ov("knot_axis_calibration_mix", args.knot_axis_calibration_mix)
     ov("soft_clamp_alpha", args.soft_clamp_alpha)
     ov("soft_clamp_pmin", args.soft_clamp_pmin)
     ov("out_of_plane_threshold", args.out_of_plane_threshold)
@@ -1130,6 +1143,8 @@ def _normalize_generation_config(
         "rand_fibers": args.rand_fibers,
         "knot_sequence_allow_fallback": args.knot_seq_allow_fallback,
         "knot_sequence_override_c1_c2": args.knot_seq_override_c1_c2,
+        "knot_sequence_context_enabled": args.knot_seq_context_enabled,
+        "knot_axis_calibration_enabled": args.knot_axis_calibration_enabled,
     }
     for key, value in bool_overrides.items():
         if value is not None:
@@ -1319,6 +1334,33 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
         maximum=1.0,
     )
     photo_batch = max(1, int(resolve("photorealistic_batch_size", args.photorealistic_batch_size, 4)))
+    photo_long_face_enabled = _as_bool(
+        resolve(
+            "photorealistic_long_face_enabled",
+            getattr(args, "photorealistic_long_face_enabled", None),
+            board_cfg_payload.get("photorealistic_long_face_enabled", False),
+        )
+    )
+    photo_tile_length_mm = max(
+        1.0,
+        float(
+            resolve(
+                "photorealistic_tile_length_mm",
+                getattr(args, "photorealistic_tile_length_mm", None),
+                board_cfg_payload.get("photorealistic_tile_length_mm", 145.0),
+            )
+        ),
+    )
+    photo_tile_overlap_px = max(
+        0,
+        int(
+            resolve(
+                "photorealistic_tile_overlap_px",
+                getattr(args, "photorealistic_tile_overlap_px", None),
+                board_cfg_payload.get("photorealistic_tile_overlap_px", 64),
+            )
+        ),
+    )
     photo_include_knot_maps = _as_bool(
         resolve(
             "photorealistic_include_knot_maps",
@@ -1622,6 +1664,16 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
             "thickness": float(abs(bc["y"][1] - bc["y"][0])),
             "length": float(abs(bc["z"][1] - bc["z"][0])),
         }
+        side_image_height = (
+            max(image_size, int(round(image_size * board_dims["length"] / photo_tile_length_mm)))
+            if photo_long_face_enabled and "photorealistic" in outputs
+            else image_size
+        )
+        side_image_size: Any = (
+            (image_size, side_image_height)
+            if side_image_height != image_size
+            else image_size
+        )
         chunk_index = int(accepted // photo_batch)
         fiber_blur_sigma_value = _sample_chunk_value(
             fiber_blur_spec,
@@ -1673,7 +1725,7 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
             raw_rings = _build_matlab_ring_pngs(
                 contours_main,
                 board_dims,
-                size=image_size,
+                size=side_image_size,
                 line_width=float(contour_line_width_value if contour_line_width_value is not None else 1.0),
             )
             for key, value in raw_rings.items():
@@ -1698,7 +1750,7 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
                 raw_mid = _build_matlab_mid_ring_png(
                     contours_mid,
                     board_dims,
-                    size=image_size,
+                    size=side_image_size,
                     line_width=float(contour_line_width_value if contour_line_width_value is not None else 1.0),
                 )
                 mid_png = _flip_png_vertical_bytes(
@@ -1775,7 +1827,7 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
                 rand_fibers=bool(cfg.rand_fibers),
                 out_of_plane_threshold=float(cfg.out_of_plane_threshold),
                 snr=float(cfg.snr),
-                size=image_size,
+                size=side_image_size,
             )
             for folder, side in [
                 ("fiber_1", "z_max"),
@@ -1874,7 +1926,7 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
             if arr is None:
                 return []
             import numpy as _np
-            a = _np.asarray(arr).reshape(-1)
+            a = _np.asarray(to_numpy(arr)).reshape(-1)
             return [float(v) for v in a]
 
         knot_params_export = {
@@ -1901,6 +1953,14 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
                 "dz_mm":          float(k.knot_sequence_info.get("dz_mm", 0.0)),
                 "z_min_mm":       float(k.knot_sequence_info.get("z_min_mm", 0.0)),
                 "slot_count":     int(k.knot_sequence_info.get("slot_count", 0)),
+                "visible_slot_count": int(k.knot_sequence_info.get("visible_slot_count", 0)),
+                "visible_z_min_mm": float(k.knot_sequence_info.get("visible_z_min_mm", cfg.board_z_min)),
+                "visible_z_max_mm": float(k.knot_sequence_info.get("visible_z_max_mm", cfg.board_z_max)),
+                "context_enabled": bool(k.knot_sequence_info.get("context_enabled", False)),
+                "context_before_mm": float(k.knot_sequence_info.get("context_before_mm", 0.0)),
+                "context_after_mm": float(k.knot_sequence_info.get("context_after_mm", 0.0)),
+                "axis_calibration_enabled": bool(k.knot_sequence_info.get("knot_axis_calibration_enabled", False)),
+                "axis_calibrated_count": int(k.knot_sequence_info.get("knot_axis_calibrated_count", 0)),
                 # slot_tokens : integer token id per slot (0 = empty)
                 "slot_tokens":    [int(t) for t in
                                    k.knot_sequence_info.get("slot_tokens", [])],
@@ -1949,6 +2009,11 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
                 ),
                 "photorealistic_include_knot_maps": bool(photo_include_knot_maps),
                 "photorealistic_use_rings_only": bool(photo_use_rings_only),
+                "photorealistic_long_face_enabled": bool(photo_long_face_enabled),
+                "photorealistic_tile_length_mm": float(photo_tile_length_mm),
+                "photorealistic_tile_overlap_px": int(photo_tile_overlap_px),
+                "side_image_width_px": int(image_size),
+                "side_image_height_px": int(side_image_height),
             },
             "board_config": _model_dump(cfg),
             "outputs_requested": sorted(outputs),
@@ -2030,6 +2095,8 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
                 include_knot_maps=bool(photo_include_knot_maps),
                 use_rings_only=bool(photo_use_rings_only),
                 boards_per_batch=photo_batch,
+                long_face_enabled=bool(photo_long_face_enabled),
+                tile_overlap_px=int(photo_tile_overlap_px),
             )
             if len(chunk_outputs) != len(chunk):
                 raise RuntimeError(
@@ -2128,6 +2195,9 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
             "include_knot_maps": bool(photo_include_knot_maps),
             "use_rings_only": bool(photo_use_rings_only),
             "boards_per_batch": int(photo_batch),
+            "long_face_enabled": bool(photo_long_face_enabled),
+            "tile_length_mm": float(photo_tile_length_mm),
+            "tile_overlap_px": int(photo_tile_overlap_px),
         },
         "chunk_sampled_params": {
             "chunk_size_boards": int(photo_batch),
@@ -2233,6 +2303,23 @@ def regenerate_photorealistic_for_existing_boards(args: Any) -> None:
         maximum=2.0,
     )
     photo_batch = max(1, int(resolve("photorealistic_batch_size", args.photorealistic_batch_size, 4)))
+    photo_long_face_enabled = _as_bool(
+        resolve(
+            "photorealistic_long_face_enabled",
+            getattr(args, "photorealistic_long_face_enabled", None),
+            False,
+        )
+    )
+    photo_tile_overlap_px = max(
+        0,
+        int(
+            resolve(
+                "photorealistic_tile_overlap_px",
+                getattr(args, "photorealistic_tile_overlap_px", None),
+                64,
+            )
+        ),
+    )
     photo_include_knot_maps = _as_bool(
         resolve(
             "photorealistic_include_knot_maps",
@@ -2328,6 +2415,8 @@ def regenerate_photorealistic_for_existing_boards(args: Any) -> None:
                 "img2img_strength": _serialize_range_or_list_spec(photo_img2img_spec),
                 "include_knot_maps": bool(photo_include_knot_maps),
                 "use_rings_only": bool(photo_use_rings_only),
+                "long_face_enabled": bool(photo_long_face_enabled),
+                "tile_overlap_px": int(photo_tile_overlap_px),
                 "boards_per_batch": int(photo_batch),
                 "fiber_irregularity_strength": _serialize_range_spec(fiber_irregularity_spec),
                 "ring_irregularity_strength": _serialize_range_spec(ring_irregularity_spec),
@@ -2350,7 +2439,8 @@ def regenerate_photorealistic_for_existing_boards(args: Any) -> None:
         f"[board-cli] regenerating photorealistic faces for {len(selected_stems)} boards "
         f"(root={root}, boards_per_batch={photo_batch}, overwrite={overwrite}, "
         f"include_knot_maps={bool(photo_include_knot_maps)}, "
-        f"use_rings_only={bool(photo_use_rings_only)})"
+        f"use_rings_only={bool(photo_use_rings_only)}, "
+        f"long_face_enabled={bool(photo_long_face_enabled)})"
     )
 
     photo_guidance_chunk_values: Dict[int, float] = {}
@@ -2414,6 +2504,8 @@ def regenerate_photorealistic_for_existing_boards(args: Any) -> None:
             include_knot_maps=bool(photo_include_knot_maps),
             use_rings_only=bool(photo_use_rings_only),
             boards_per_batch=photo_batch,
+            long_face_enabled=bool(photo_long_face_enabled),
+            tile_overlap_px=int(photo_tile_overlap_px),
         )
         if len(chunk_outputs) != len(chunk_stems):
             raise RuntimeError(
@@ -2465,6 +2557,8 @@ def regenerate_photorealistic_for_existing_boards(args: Any) -> None:
             "img2img_strength": _serialize_range_or_list_spec(photo_img2img_spec),
             "include_knot_maps": bool(photo_include_knot_maps),
             "use_rings_only": bool(photo_use_rings_only),
+            "long_face_enabled": bool(photo_long_face_enabled),
+            "tile_overlap_px": int(photo_tile_overlap_px),
             "boards_per_batch": int(photo_batch),
             "fiber_irregularity_strength": _serialize_range_spec(fiber_irregularity_spec),
             "ring_irregularity_strength": _serialize_range_spec(ring_irregularity_spec),

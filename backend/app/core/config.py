@@ -123,12 +123,28 @@ class BoardConfig(BaseModel):
     knot_sequence_reject_intersections: bool = True
     knot_sequence_intersection_max_attempts: int = 64
     knot_dictionary_jitter: float = 0.0
+    # Optional axial context around the visible board. Context knots remain in
+    # the geometry when their origins are outside the visible Z interval.
+    knot_sequence_context_enabled: bool = False
+    knot_sequence_context_before_mm: float = 100.0
+    knot_sequence_context_after_mm: float = 100.0
     # Override knot c1/c2 using:
     #   c1 = -1.458e-3
     #   Ax100 ~ U(32.7, 55.3)
     #   c2 = 9.7e-3 * Ax100 + 0.1725
     # Applied to both generated and manual knots.
     knot_sequence_override_c1_c2: bool = True
+    # Optional empirical axis calibration. The JSON profile stores paired
+    # dz50/dz100 observations so curvature and rise remain correlated.
+    knot_axis_calibration_enabled: bool = False
+    knot_axis_calibration_path: str = ""
+    knot_axis_calibration_mix: float = 0.8
+
+    # Optional tiled translation for faces longer than the diffusion model's
+    # native square field of view.
+    photorealistic_long_face_enabled: bool = False
+    photorealistic_tile_length_mm: float = 145.0
+    photorealistic_tile_overlap_px: int = 64
 
     # Visualization Flags
     display_rings: bool = False

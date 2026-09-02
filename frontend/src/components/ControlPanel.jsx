@@ -1055,6 +1055,42 @@ const ControlPanel = ({
                                 <input type="number" min={0} step="1" value={config.input_knot_count} onChange={(e) => setKnotCount(e.target.value)} />
                             </label>
                         </div>
+
+                        <label className="toggle">
+                            <input
+                                type="checkbox"
+                                checked={!!config.knot_axis_calibration_enabled}
+                                onChange={(e) => handleChange('knot_axis_calibration_enabled', e.target.checked, 'bool')}
+                            />
+                            <span>Calibrate Knot Geometry</span>
+                        </label>
+                        {config.knot_axis_calibration_enabled && (
+                            <>
+                                <div className="field-grid single">
+                                    <label className="field">
+                                        <span>Calibration Profile JSON</span>
+                                        <input
+                                            type="text"
+                                            value={config.knot_axis_calibration_path || ''}
+                                            onChange={(e) => handleChange('knot_axis_calibration_path', e.target.value)}
+                                        />
+                                    </label>
+                                </div>
+                                <div className="field-grid single">
+                                    <label className="field">
+                                        <span>Calibrated Knot Fraction</span>
+                                        <input
+                                            type="number"
+                                            min={0}
+                                            max={1}
+                                            step="0.05"
+                                            value={toNumber(config.knot_axis_calibration_mix, 0.8)}
+                                            onChange={(e) => handleChange('knot_axis_calibration_mix', e.target.value, 'number')}
+                                        />
+                                    </label>
+                                </div>
+                            </>
+                        )}
                         <div className="field-grid">
                             <label className="field">
                                 <span>Soft Clamp alpha</span>
@@ -1088,6 +1124,7 @@ const ControlPanel = ({
                                     <input
                                         type="checkbox"
                                         checked={!!config.knot_sequence_override_c1_c2}
+                                        disabled={!!config.knot_axis_calibration_enabled}
                                         onChange={(e) => handleChange('knot_sequence_override_c1_c2', e.target.checked, 'bool')}
                                     />
                                     <span>Use c1=-1.458e-3 and c2 from Ax100 model for all knots</span>
@@ -1097,6 +1134,26 @@ const ControlPanel = ({
 
                         {!config.use_input_knots && (
                             <>
+                                <label className="toggle">
+                                    <input
+                                        type="checkbox"
+                                        checked={!!config.knot_sequence_context_enabled}
+                                        onChange={(e) => handleChange('knot_sequence_context_enabled', e.target.checked, 'bool')}
+                                    />
+                                    <span>Extend Knot Sequence Beyond Board Ends</span>
+                                </label>
+                                {config.knot_sequence_context_enabled && (
+                                    <div className="field-grid">
+                                        <label className="field">
+                                            <span>Context Before (mm)</span>
+                                            <input type="number" min={0} step="10" value={toNumber(config.knot_sequence_context_before_mm, 100)} onChange={(e) => handleChange('knot_sequence_context_before_mm', e.target.value, 'number')} />
+                                        </label>
+                                        <label className="field">
+                                            <span>Context After (mm)</span>
+                                            <input type="number" min={0} step="10" value={toNumber(config.knot_sequence_context_after_mm, 100)} onChange={(e) => handleChange('knot_sequence_context_after_mm', e.target.value, 'number')} />
+                                        </label>
+                                    </div>
+                                )}
                                 <div className="field-grid">
                                     <label className="field">
                                         <span>L100 Min</span>
@@ -1793,6 +1850,40 @@ const ControlPanel = ({
                             />
                             <span>Include Knot Maps (from fibers)</span>
                         </label>
+
+                        <label className="toggle">
+                            <input
+                                type="checkbox"
+                                checked={!!config.photorealistic_long_face_enabled}
+                                onChange={(e) => handleChange('photorealistic_long_face_enabled', e.target.checked, 'bool')}
+                            />
+                            <span>Overlap-Blend Long Faces</span>
+                        </label>
+                        {config.photorealistic_long_face_enabled && (
+                            <div className="field-grid">
+                                <label className="field">
+                                    <span>Tile Length (mm)</span>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        step="1"
+                                        value={toNumber(config.photorealistic_tile_length_mm, 145)}
+                                        onChange={(e) => handleChange('photorealistic_tile_length_mm', e.target.value, 'number')}
+                                    />
+                                </label>
+                                <label className="field">
+                                    <span>Tile Overlap (px)</span>
+                                    <input
+                                        type="number"
+                                        min={0}
+                                        max={511}
+                                        step="8"
+                                        value={toInt(config.photorealistic_tile_overlap_px, 64)}
+                                        onChange={(e) => handleChange('photorealistic_tile_overlap_px', e.target.value, 'int')}
+                                    />
+                                </label>
+                            </div>
+                        )}
 
                         <p className="section-copy export-note">
                             Guidance Scale: Higher values keep the result closer to your conditioning maps (rings, and optionally fibers). Lower values allow more variation in look.

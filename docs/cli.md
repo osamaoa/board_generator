@@ -62,6 +62,41 @@ High-impact batch settings include:
 
 Range syntax is supported for selected map and photorealistic settings. A value such as `0.1,0.4` samples one value for each batch chunk. `--photorealistic-img2img-strength` also accepts a longer discrete list.
 
+### Long Boards And Knot Context
+
+Board dimensions remain ordinary configuration values. For example, set
+`board_length` to `435` to generate a three-segment board. Knot-sequence context
+is optional and permits knots whose origins lie outside the visible board to
+intersect an end face:
+
+```bash
+./board_cli.py boards generate \
+  --config-json path/to/boards_config.json \
+  --knot-seq-context-enabled true \
+  --knot-seq-context-before-mm 100 \
+  --knot-seq-context-after-mm 100
+```
+
+The visible board coordinates are unchanged. Only the sampled knot sequence is
+extended before and after it, and the chosen layout is written to board
+metadata. Disable the option to retain the legacy sequence extent.
+
+Empirical knot-axis calibration is also optional. A calibration profile stores
+paired axial displacements at 50 and 100 mm, allowing the generator to sample
+`c1` and `c2` together rather than independently:
+
+```bash
+./board_cli.py boards generate \
+  --config-json path/to/boards_config.json \
+  --knot-axis-calibration-enabled true \
+  --knot-axis-calibration-path /path/to/knot_axis_profile.json \
+  --knot-axis-calibration-mix 0.8
+```
+
+The mix is the probability of using an empirical observation; the remainder
+uses the knot library. Calibration takes precedence over the legacy fixed
+`c1`/`c2` override while enabled.
+
 ### Photorealistic Batch Modes
 
 Photorealistic generation can use ring and fiber maps or ring-only conditioning:
@@ -81,6 +116,22 @@ Knot-map conditioning is derived from fiber maps and is enabled with:
 ```
 
 Ring-only conditioning and knot-map conditioning are mutually exclusive.
+
+For a face longer than the diffusion model's native square field of view,
+optional long-face translation divides each conditioning map into overlapping
+square windows and feather-blends the generated windows:
+
+```bash
+./board_cli.py boards generate \
+  --config-json path/to/boards_config.json \
+  --photorealistic-long-face-enabled true \
+  --photorealistic-tile-length-mm 145 \
+  --photorealistic-tile-overlap-px 96
+```
+
+The side-map height is derived from `board_length / tile_length_mm`; top and
+bottom maps remain square. Disable this option to use the original single-image
+translation path.
 
 ### Multi-GPU Generation
 
@@ -110,6 +161,8 @@ Or point directly at an existing dataset:
   --data-root /tmp/boards_out \
   --stems 00001,00002,00003 \
   --photorealistic-batch-size 8 \
+  --photorealistic-long-face-enabled true \
+  --photorealistic-tile-overlap-px 96 \
   --overwrite true
 ```
 

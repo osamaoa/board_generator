@@ -32,6 +32,19 @@ Dimensions mode samples valid board placement attempts. A generated board can be
 
 ### Knots
 
+The knot controls include three independent opt-in features for long-board
+datasets:
+
+- **External knot-sequence context** samples origins before and after the
+  visible board while leaving its coordinate system and dimensions unchanged.
+- **Calibrate knot geometry** loads a paired empirical axis-displacement
+  profile and controls how often it replaces the original library geometry.
+- **Overlap-blend long faces** renders proportionally tall side maps, translates
+  them in native-size windows, and feather-blends overlapping predictions.
+
+All three switches default to off. Their values are part of the same simulation
+configuration sent by the UI and accepted by the CLI.
+
 The knot controls choose between generated knot sequences and manual knot parameters. The generated path uses the trained knot-sequence assets available to the backend. Manual mode exposes knot angle, axial position, dead/live radii, axis shape, and growth-bump parameters.
 
 ### Fibers
