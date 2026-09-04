@@ -94,7 +94,9 @@ Export one generated board to a packed `.blend` scene (Blender must be installed
 
 The scene maps the four generated long-face images to separate materials and
 includes a low three-quarter perspective camera that keeps the unsupported end
-cross-sections mostly out of view.
+cross-sections mostly out of view. It also includes a seamless eight-second
+animation that lifts the board clear of the floor, spins it 360 degrees around
+its longitudinal axis, and settles it back into the initial pose.
 
 ## Documentation
 

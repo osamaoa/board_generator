@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 
 def _input(node, name: str):
@@ -195,12 +195,63 @@ def _board_mesh(length: float, width: float, thickness: float, materials):
         polygon.material_index = index if index < 4 else 4
 
     bevel = board.modifiers.new(name="SoftMilledEdges", type="BEVEL")
-    bevel.width = min(0.0014, 0.035 * min(width, thickness))
+    bevel.width = 0.005
     bevel.segments = 5
     bevel.limit_method = "ANGLE"
     bevel.angle_limit = math.radians(25.0)
     bevel.harden_normals = True
     return board
+
+
+def _add_longitudinal_spin(board, *, width: float, thickness: float):
+    """Animate one seamless revolution about the board's geometric long axis."""
+    scene = bpy.context.scene
+    centre_z = 0.001 + 0.5 * thickness
+    rig = bpy.data.objects.new("BoardLongitudinalSpinRig", None)
+    bpy.context.collection.objects.link(rig)
+    rig.empty_display_type = "PLAIN_AXES"
+    rig.empty_display_size = max(0.04, 1.4 * thickness)
+    rig.location = (0.0, 0.0, centre_z)
+    rig.rotation_mode = "XYZ"
+
+    # Keep frame 1 visually unchanged while moving the pivot to the centreline.
+    board.parent = rig
+    board.matrix_parent_inverse = Matrix.Identity(4)
+    board.location = (0.0, 0.0, -centre_z)
+
+    # Drivers avoid Blender-version-dependent Bezier defaults. The board first
+    # lifts clear of the studio floor, rotates at constant angular velocity,
+    # then settles back into the exact frame-1 pose.
+    rig.rotation_euler = (0.0, 0.0, 0.0)
+    spin_curve = rig.driver_add("rotation_euler", 0)
+    spin_curve.driver.type = "SCRIPTED"
+    spin_curve.driver.expression = (
+        "0.0 if frame <= 31 else "
+        "(6.283185307179586 if frame >= 211 else "
+        "0.03490658503988659 * (frame - 31))"
+    )
+
+    clearance_centre_z = math.hypot(0.5 * width, 0.5 * thickness) + 0.002
+    lift = max(0.0, clearance_centre_z - centre_z)
+    lift_curve = rig.driver_add("location", 2)
+    lift_curve.driver.type = "SCRIPTED"
+    lift_curve.driver.expression = (
+        f"{centre_z:.12g} + {lift:.12g} * ("
+        "(0.5 - 0.5 * cos(0.10471975511965977 * (frame - 1))) "
+        "if frame < 31 else "
+        "(1.0 if frame <= 211 else "
+        "0.5 - 0.5 * cos(0.10471975511965977 * (241 - frame))))"
+    )
+
+    rig["animation"] = "lift, 360 degree longitudinal-axis spin, and settle"
+    rig["loop_frames"] = "1-240; frame 241 duplicates frame 1"
+    rig["motion_timing"] = "lift 1-31, spin 31-211, settle 211-241"
+    scene.frame_start = 1
+    scene.frame_end = 240
+    scene.render.fps = 30
+    scene.render.fps_base = 1.0
+    scene.frame_set(1)
+    return rig
 
 
 def _ground_material():
@@ -256,6 +307,7 @@ def _build_scene(payload) -> None:
     ]
     materials.append(_end_material())
     board = _board_mesh(length, width, thickness, materials)
+    spin_rig = _add_longitudinal_spin(board, width=width, thickness=thickness)
     board["source_stem"] = payload["stem"]
     board["surface_source"] = payload["surface_source"]
     board["dimensions_mm"] = [float(dimensions[key]) for key in ("length", "width", "thickness")]
@@ -265,6 +317,7 @@ def _build_scene(payload) -> None:
     )
     board["seam_mapping"] = "1L-3R, 1R-4L, 2R-3L, 2L-4R"
     board["end_cross_sections"] = "procedural placeholder; presentation camera hides these faces"
+    board["animation_rig"] = spin_rig.name
 
     bpy.ops.mesh.primitive_plane_add(size=max(2.4 * length, 1.8), location=(0.0, 0.0, 0.0))
     ground = bpy.context.object
