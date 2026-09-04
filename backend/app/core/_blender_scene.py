@@ -280,35 +280,23 @@ def _build_scene(payload) -> None:
         (1.0, 0.78, 0.58),
         target,
     )
-    _area_light(
-        "Fill_Softbox",
-        (0.20 * length, 0.74 * length, 0.42 * length),
-        2.5,
-        0.60 * length,
-        (0.58, 0.72, 1.0),
-        target,
-    )
-    _area_light(
-        "Edge_Strip",
-        (0.0, 0.05 * length, 1.08 * length),
-        4.0,
-        0.42 * length,
-        (1.0, 0.92, 0.80),
-        target,
-    )
 
     camera_data = bpy.data.cameras.new("PresentationCamera")
     camera = bpy.data.objects.new("PresentationCamera", camera_data)
     bpy.context.collection.objects.link(camera)
-    # Orthographic projection plus zero X offset makes both unsupported end
-    # cross-sections exactly edge-on while showing the top and front long faces.
-    camera.location = (0.0, -1.22 * length, 0.78 * length)
-    camera.data.type = "ORTHO"
-    aspect = 1200.0 / 700.0
-    projected_cross_section = 0.82 * width + 0.58 * thickness
-    camera.data.ortho_scale = max(1.13 * length / aspect, 1.75 * projected_cross_section)
-    camera.data.lens = 62.0
-    _look_at(camera, target)
+    # Match the manually approved 00002 presentation: a 50 mm perspective
+    # camera pitched down 45 degrees, centered across the board length.  The
+    # distance scales with length while the aim height follows board thickness,
+    # retaining the same composition for other board dimensions.
+    camera_distance = 1.23478943 * length
+    camera.location = (
+        0.0,
+        -camera_distance,
+        camera_distance + 0.96018444 * thickness,
+    )
+    camera.rotation_euler = (math.radians(45.0), 0.0, 0.0)
+    camera.data.type = "PERSP"
+    camera.data.lens = 50.00163269
     bpy.context.scene.camera = camera
 
     scene = bpy.context.scene

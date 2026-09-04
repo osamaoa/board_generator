@@ -338,5 +338,5 @@ def export_board_to_blender(
         "preview_path": str(image_path) if render_preview else None,
         "blender_executable": str(executable),
         "images_packed": bool(pack_images),
-        "camera": "orthographic three-quarter long-side view; end cross-sections edge-on",
+        "camera": "50 mm perspective three-quarter long-side view; end cross-sections minimized",
     }

@@ -193,13 +193,13 @@ By default it writes:
 The Blender scene preserves the generator's physical dimensions and face
 order: surface 1 is +Y, surface 2 is -Y, surface 3 is +X, and surface 4 is -X.
 Each surface gets its own UV-mapped material with image-derived grain bump,
-micro-roughness, soft milled edge bevels, and studio lighting. Source images
-are packed into the `.blend` file by default.
+micro-roughness, soft milled edge bevels, and a single warm softbox. Source
+images are packed into the `.blend` file by default.
 
 The top and bottom end cross-sections are not photorealistic generator outputs.
 They receive a clearly named procedural placeholder material. The supplied
-orthographic three-quarter camera is perpendicular to the board length, making
-both end faces edge-on and concealing them in the default render.
+50 mm perspective camera uses a low three-quarter view centered across the
+board length, keeping both end faces minimally visible in the default render.
 
 Useful options include:
 
