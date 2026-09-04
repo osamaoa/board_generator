@@ -5,7 +5,7 @@ Board Generator creates synthetic wood boards from a 3D log model. It combines g
 The package provides:
 
 - a web UI for interactive board and log generation, 3D inspection, MATLAB export, image-map export, and photorealistic face export
-- a CLI for batch board exports, knot-sequence model data preparation/training/evaluation, and photorealistic diffusion training
+- a CLI for batch board exports, render-ready Blender export, knot-sequence model data preparation/training/evaluation, and photorealistic diffusion training
 
 ## Hugging Face Demo
 
@@ -85,6 +85,15 @@ npm run dev -- --host 0.0.0.0 --port 5175
 ```
 
 Open the UI at `http://localhost:5175`. The CLI entrypoint is `./board_cli.py`.
+
+Export one generated board to a packed `.blend` scene (Blender must be installed):
+
+```bash
+./board_cli.py boards export-blender --data-root /tmp/boards_out --stem 00001
+```
+
+The scene maps the four generated long-face images to separate materials and
+includes a default camera that keeps the unsupported end cross-sections edge-on.
 
 ## Documentation
 

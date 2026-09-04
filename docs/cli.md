@@ -8,7 +8,7 @@ The CLI entrypoint is:
 
 It uses the same backend simulation core as the UI. The public command groups are:
 
-- `boards`: batch board generation and photorealistic face regeneration
+- `boards`: batch generation, photorealistic face regeneration, and Blender export
 - `knots`: knot-sequence data preparation, training, sampling, and evaluation
 - `diffusion`: photorealistic diffusion training
 
@@ -167,6 +167,56 @@ Or point directly at an existing dataset:
 ```
 
 Regeneration needs `fiber_1..4` unless `--photorealistic-use-rings-only true` is used.
+
+### Export A Board To Blender
+
+Turn an existing generated board into a self-contained, render-ready Blender file:
+
+```bash
+./board_cli.py boards export-blender \
+  --data-root /tmp/boards_out \
+  --stem 00001
+```
+
+The command uses `photorealistic_1..4` when all four images exist. Otherwise,
+`--surface-source auto` falls back to `ring_color_1..4`. Select a source
+explicitly with `--surface-source photorealistic` or
+`--surface-source ring-color`.
+
+By default it writes:
+
+```text
+<data-root>/blender/00001.blend
+<data-root>/blender/00001_preview.png
+```
+
+The Blender scene preserves the generator's physical dimensions and face
+order: surface 1 is +Y, surface 2 is -Y, surface 3 is +X, and surface 4 is -X.
+Each surface gets its own UV-mapped material with image-derived grain bump,
+micro-roughness, soft milled edge bevels, and studio lighting. Source images
+are packed into the `.blend` file by default.
+
+The top and bottom end cross-sections are not photorealistic generator outputs.
+They receive a clearly named procedural placeholder material. The supplied
+orthographic three-quarter camera is perpendicular to the board length, making
+both end faces edge-on and concealing them in the default render.
+
+Useful options include:
+
+```bash
+./board_cli.py boards export-blender \
+  --data-root /tmp/boards_out \
+  --stem 00001 \
+  --output-path /tmp/exports/my_board.blend \
+  --render-engine cycles \
+  --samples 128 \
+  --render-preview true \
+  --pack-images true
+```
+
+Blender is discovered from `BLENDER_EXECUTABLE`, `blender` on `PATH`, or the
+newest Windows Blender installation visible under `/mnt/c/Program Files` when
+the CLI runs in WSL. Override discovery with `--blender-executable`.
 
 ## Knot-Sequence Model
 

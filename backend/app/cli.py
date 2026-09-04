@@ -1080,6 +1080,81 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    export_blender = boards_sub.add_parser(
+        "export-blender",
+        help=(
+            "Build a render-ready .blend model from an existing board's four "
+            "photorealistic or ring-color side surfaces."
+        ),
+    )
+    export_blender.add_argument(
+        "--data-root",
+        type=str,
+        required=True,
+        help="Board dataset root containing metadata and four matching surface folders.",
+    )
+    export_blender.add_argument(
+        "--stem",
+        type=str,
+        default="",
+        help="Board filename stem, for example 00001. Default: first board in manifest.json.",
+    )
+    export_blender.add_argument(
+        "--output-path",
+        type=str,
+        default="",
+        help="Destination .blend path. Default: <data-root>/blender/<stem>.blend.",
+    )
+    export_blender.add_argument(
+        "--surface-source",
+        type=str,
+        choices=["auto", "photorealistic", "ring-color"],
+        default="auto",
+        help="Four-face texture source. Auto prefers photorealistic and falls back to ring_color.",
+    )
+    export_blender.add_argument(
+        "--blender-executable",
+        type=str,
+        default="",
+        help=(
+            "Blender executable. Default: BLENDER_EXECUTABLE, blender on PATH, or the "
+            "newest Windows Blender installation visible from WSL."
+        ),
+    )
+    export_blender.add_argument(
+        "--render-preview",
+        type=str,
+        choices=["true", "false", "1", "0", "yes", "no", "on", "off"],
+        default="true",
+        help="Render the configured presentation camera to PNG (default: true).",
+    )
+    export_blender.add_argument(
+        "--preview-path",
+        type=str,
+        default="",
+        help="Preview PNG path. Default: beside the .blend file with _preview suffix.",
+    )
+    export_blender.add_argument(
+        "--render-engine",
+        type=str,
+        choices=["eevee", "cycles"],
+        default="eevee",
+        help="Blender renderer used for the optional preview (default: eevee).",
+    )
+    export_blender.add_argument(
+        "--samples",
+        type=int,
+        default=64,
+        help="Cycles preview samples when --render-engine=cycles (default: 64).",
+    )
+    export_blender.add_argument(
+        "--pack-images",
+        type=str,
+        choices=["true", "false", "1", "0", "yes", "no", "on", "off"],
+        default="true",
+        help="Pack all four source images into the .blend file (default: true).",
+    )
+
     return parser
 
 
@@ -1240,6 +1315,28 @@ def main(argv: list[str] | None = None) -> int:
             regenerate_photorealistic_for_existing_boards(args)
             return 0
         except (RuntimeError, ImportError, ValueError) as exc:
+            print(f"[board-cli] configuration error: {exc}", file=sys.stderr)
+            return 2
+
+    if args.group == "boards" and args.command == "export-blender":
+        try:
+            from app.core.blender_export import export_board_to_blender
+
+            summary = export_board_to_blender(
+                args.data_root,
+                stem=str(args.stem),
+                output_path=str(args.output_path),
+                surface_source=str(args.surface_source),
+                blender_executable=str(args.blender_executable),
+                render_preview=_as_bool_or_default(args.render_preview, True),
+                preview_path=str(args.preview_path),
+                render_engine=str(args.render_engine),
+                samples=max(1, int(args.samples)),
+                pack_images=_as_bool_or_default(args.pack_images, True),
+            )
+            print(json.dumps(summary, indent=2))
+            return 0
+        except (RuntimeError, ImportError, OSError, ValueError) as exc:
             print(f"[board-cli] configuration error: {exc}", file=sys.stderr)
             return 2
 

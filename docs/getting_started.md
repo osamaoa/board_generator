@@ -6,6 +6,10 @@
 - Node.js 18 or newer
 - `npm`
 
+Blender is optional and is only required for `boards export-blender`. The CLI
+can use Blender on `PATH`, `BLENDER_EXECUTABLE`, or an installed Windows copy of
+Blender that is visible from WSL.
+
 MATLAB is optional and is only needed to run the exported MATLAB visualization script. Photorealistic generation requires a CUDA-capable GPU. Without CUDA, the UI and CLI keep the non-photorealistic simulation and export features available.
 
 ## Install
@@ -124,6 +128,7 @@ Open `http://localhost:5175`.
 ```bash
 ./board_cli.py --help
 ./board_cli.py boards --help
+./board_cli.py boards export-blender --help
 ./board_cli.py knots --help
 ./board_cli.py diffusion --help
 ```
