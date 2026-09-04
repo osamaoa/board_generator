@@ -218,6 +218,30 @@ Blender is discovered from `BLENDER_EXECUTABLE`, `blender` on `PATH`, or the
 newest Windows Blender installation visible under `/mnt/c/Program Files` when
 the CLI runs in WSL. Override discovery with `--blender-executable`.
 
+To export every accepted board automatically after `boards generate`, add a
+top-level block to the generation JSON:
+
+```json
+{
+  "config": {},
+  "boards_generate": {
+    "outputs": "rings,fibers,photorealistic"
+  },
+  "blender_export": {
+    "enabled": true,
+    "surface_source": "photorealistic",
+    "render_preview": true,
+    "render_engine": "eevee",
+    "samples": 64,
+    "pack_images": true
+  }
+}
+```
+
+This post-generation step runs only after all requested photorealistic faces
+have been written. `output_dir` and `blender_executable` are optional; the same
+defaults as `boards export-blender` are used when they are omitted.
+
 ## Knot-Sequence Model
 
 Prepare knot-model training data:

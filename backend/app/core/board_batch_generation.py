@@ -865,6 +865,20 @@ def _run_multi_gpu_board_generation(
     for m in worker_manifests:
         generated_filenames.extend([str(v) for v in (m.get("generated_filenames") or [])])
     aggregate["generated_filenames"] = sorted(set(generated_filenames))
+    worker_blender_exports = [
+        m.get("blender_export")
+        for m in worker_manifests
+        if isinstance(m.get("blender_export"), dict)
+    ]
+    if worker_blender_exports:
+        combined_blender = dict(worker_blender_exports[0])
+        combined_blender["exports"] = [
+            item
+            for worker_summary in worker_blender_exports
+            for item in (worker_summary.get("exports") or [])
+            if isinstance(item, dict)
+        ]
+        aggregate["blender_export"] = combined_blender
     aggregate["multi_gpu"] = {
         "enabled": True,
         "gpu_workers": int(len(worker_specs)),
@@ -1219,6 +1233,68 @@ def _normalize_generation_config(
         random_taper_max=float(random_taper_max),
     )
     return cfg, policy
+
+
+def _export_generated_boards_to_blender(
+    config_payload: Dict[str, Any],
+    *,
+    root: Path,
+    filenames: Sequence[str],
+) -> Optional[Dict[str, Any]]:
+    raw = config_payload.get("blender_export")
+    settings = dict(raw) if isinstance(raw, dict) else {}
+    enabled = _as_bool(settings.get("enabled", False))
+    if not enabled:
+        return None
+
+    from app.core.blender_export import export_board_to_blender
+
+    source = str(settings.get("surface_source", "auto") or "auto")
+    export_dir_raw = str(settings.get("output_dir", "") or "").strip()
+    export_dir = (
+        Path(export_dir_raw).expanduser().resolve()
+        if export_dir_raw
+        else (root / "blender").resolve()
+    )
+    render_preview = _as_bool(settings.get("render_preview", True))
+    render_engine = str(settings.get("render_engine", "eevee") or "eevee")
+    samples = max(1, int(settings.get("samples", 64) or 64))
+    pack_images = _as_bool(settings.get("pack_images", True))
+    blender_executable = str(settings.get("blender_executable", "") or "")
+
+    export_dir.mkdir(parents=True, exist_ok=True)
+    summaries: List[Dict[str, Any]] = []
+    print(
+        f"[board-cli] exporting {len(filenames)} Blender model(s) "
+        f"(surface_source={source}, render_preview={render_preview})"
+    )
+    for index, filename in enumerate(filenames, start=1):
+        stem = Path(str(filename)).stem
+        summary = export_board_to_blender(
+            root,
+            stem=stem,
+            output_path=export_dir / f"{stem}.blend",
+            surface_source=source,
+            blender_executable=blender_executable,
+            render_preview=render_preview,
+            preview_path=export_dir / f"{stem}_preview.png",
+            render_engine=render_engine,
+            samples=samples,
+            pack_images=pack_images,
+        )
+        summaries.append(summary)
+        print(f"[board-cli] Blender export progress: {index}/{len(filenames)}")
+
+    return {
+        "enabled": True,
+        "output_dir": str(export_dir),
+        "surface_source": source,
+        "render_preview": bool(render_preview),
+        "render_engine": render_engine,
+        "samples": int(samples),
+        "pack_images": bool(pack_images),
+        "exports": summaries,
+    }
 
 
 def generate_boards_dataset(args: Any) -> Dict[str, Any]:
@@ -2137,6 +2213,12 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
                 f"[board-cli] photorealistic progress: {min(start + photo_batch, total_jobs)}/{total_jobs}"
             )
 
+    blender_export_summary = _export_generated_boards_to_blender(
+        config_payload,
+        root=root,
+        filenames=accepted_filenames,
+    )
+
     manifest = {
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
         "num_boards_requested": num_boards,
@@ -2199,6 +2281,7 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
             "tile_length_mm": float(photo_tile_length_mm),
             "tile_overlap_px": int(photo_tile_overlap_px),
         },
+        "blender_export": blender_export_summary,
         "chunk_sampled_params": {
             "chunk_size_boards": int(photo_batch),
             "contour_line_width_by_chunk": {

@@ -5,6 +5,7 @@ import json
 from PIL import Image
 
 from app.cli import _build_parser
+from app.core.board_batch_generation import _export_generated_boards_to_blender
 from app.core.blender_export import resolve_board_export_input
 
 
@@ -89,3 +90,31 @@ def test_cli_parser_exposes_blender_export_options() -> None:
     assert args.command == "export-blender"
     assert args.surface_source == "ring-color"
     assert args.render_preview == "false"
+
+
+def test_generation_config_runs_blender_post_export(tmp_path, monkeypatch) -> None:
+    calls = []
+
+    def fake_export(data_root, **kwargs):
+        calls.append((data_root, kwargs))
+        return {"stem": kwargs["stem"], "blend_path": str(kwargs["output_path"])}
+
+    monkeypatch.setattr("app.core.blender_export.export_board_to_blender", fake_export)
+    summary = _export_generated_boards_to_blender(
+        {
+            "blender_export": {
+                "enabled": True,
+                "surface_source": "photorealistic",
+                "render_preview": False,
+                "pack_images": True,
+            }
+        },
+        root=tmp_path,
+        filenames=["00001.png", "00002.png"],
+    )
+
+    assert summary is not None
+    assert summary["enabled"] is True
+    assert [call[1]["stem"] for call in calls] == ["00001", "00002"]
+    assert calls[0][1]["surface_source"] == "photorealistic"
+    assert calls[0][1]["render_preview"] is False
