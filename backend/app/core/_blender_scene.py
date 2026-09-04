@@ -157,8 +157,10 @@ def _board_mesh(length: float, width: float, thickness: float, materials):
         (-lx, wy, z1),
     ]
     # The generator's coordinates are remapped as Z->X, X->Y, Y->Z.
-    # Material slots: +Y/top=surface1, -Y/bottom=surface2,
-    # +X/back=surface3, -X/front=surface4, then the two end placeholders.
+    # Material slots follow the generator's source coordinates. After the
+    # Z->X, X->Y, Y->Z remap these become Blender +Z, -Z, +Y, and -Y.
+    # The generated images already use the MATLAB face orientation, whose
+    # compatible corner pairs are 1L-3R, 1R-4L, 2R-3L, and 2L-4R.
     faces = [
         (4, 5, 6, 7),  # top, original +Y, surface 1
         (0, 3, 2, 1),  # bottom, original -Y, surface 2
@@ -169,10 +171,10 @@ def _board_mesh(length: float, width: float, thickness: float, materials):
     ]
     # Image U crosses each physical face; image V follows the board length.
     face_uvs = [
-        ((0, 0), (0, 1), (1, 1), (1, 0)),
+        ((1, 0), (1, 1), (0, 1), (0, 0)),
         ((0, 0), (1, 0), (1, 1), (0, 1)),
         ((0, 0), (1, 0), (1, 1), (0, 1)),
-        ((0, 0), (0, 1), (1, 1), (1, 0)),
+        ((1, 0), (1, 1), (0, 1), (0, 0)),
         ((0, 0), (1, 0), (1, 1), (0, 1)),
         ((0, 0), (1, 0), (1, 1), (0, 1)),
     ]
@@ -243,10 +245,10 @@ def _build_scene(payload) -> None:
         raise RuntimeError("Board dimensions must all be positive.")
 
     face_names = (
-        "Surface_1_PositiveY_Top",
-        "Surface_2_NegativeY_Bottom",
-        "Surface_3_PositiveX_Back",
-        "Surface_4_NegativeX_Front",
+        "Surface_1_SourcePositiveY_BlenderPositiveZ_Top",
+        "Surface_2_SourceNegativeY_BlenderNegativeZ_Bottom",
+        "Surface_3_SourcePositiveX_BlenderPositiveY_Back",
+        "Surface_4_SourceNegativeX_BlenderNegativeY_Front",
     )
     materials = [
         _wood_material(name, image_path)
@@ -257,7 +259,11 @@ def _build_scene(payload) -> None:
     board["source_stem"] = payload["stem"]
     board["surface_source"] = payload["surface_source"]
     board["dimensions_mm"] = [float(dimensions[key]) for key in ("length", "width", "thickness")]
-    board["face_mapping"] = "1:+Y/top, 2:-Y/bottom, 3:+X/back, 4:-X/front"
+    board["face_mapping"] = (
+        "source 1:+Y=Blender +Z/top, 2:-Y=Blender -Z/bottom, "
+        "3:+X=Blender +Y/back, 4:-X=Blender -Y/front"
+    )
+    board["seam_mapping"] = "1L-3R, 1R-4L, 2R-3L, 2L-4R"
     board["end_cross_sections"] = "procedural placeholder; presentation camera hides these faces"
 
     bpy.ops.mesh.primitive_plane_add(size=max(2.4 * length, 1.8), location=(0.0, 0.0, 0.0))
