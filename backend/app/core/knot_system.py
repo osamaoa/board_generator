@@ -1258,7 +1258,7 @@ class KnotSystem:
         # y_grid: Thickness
         # z_grid: Length (longitudinal axis used for crook/taper)
 
-        # Expand dims for broadcasting against knots
+        # Expand dims for broadcasting against knots.
         # Grid: (Ny, Nx, Nz) -> (Ny, Nx, Nz, 1)
         x_board = xp.asarray(x_grid)[..., xp.newaxis]
         y_board = xp.asarray(y_grid)[..., xp.newaxis]
@@ -1270,10 +1270,23 @@ class KnotSystem:
         include_knot_dev = flags.get('include_knot_dev', True)
         dead_knots = flags.get('dead_knots', False)
         
-        # 1. Transform transverse coordinates by crook/taper along board length.
-        x_transverse = x_board + self.crook_x(z_board)
-        y_transverse = y_board + self.crook_y(z_board)
-        Ro_mod = Ro - self.taper(z_board)
+        geometry_cache = flags.get("geometry_cache")
+        if not isinstance(geometry_cache, dict):
+            geometry_cache = None
+
+        # Knot-frame coordinates, the axis offset, and the softened distance do
+        # not depend on the current annual-ring radius. GrowthSimulator evaluates
+        # every ring on the same mesh, so it can reuse the values produced by its
+        # first full knot-influence call.
+        if geometry_cache is None:
+            taper_z = self.taper(z_board)
+            x_transverse = x_board + self.crook_x(z_board)
+            y_transverse = y_board + self.crook_y(z_board)
+        else:
+            taper_z = geometry_cache["taper_z"]
+            x_transverse = None
+            y_transverse = None
+        Ro_mod = Ro - taper_z
 
         # No-knot mode: keep ring/crook/taper field while returning empty knot info.
         if int(getattr(self, "n_knots", 0) or 0) <= 0:
@@ -1287,31 +1300,48 @@ class KnotSystem:
                 info['K_dead'] = K_empty
             return gg_base, info
 
-        # 2. Rotate the crook-corrected transverse point directly into the knot frame.
-        # Equivalent to r*cos(phi+th0), r*sin(phi+th0), but avoids the polar round trip.
-        cos_th0 = xp.cos(self.th0)
-        sin_th0 = xp.sin(self.th0)
-        radial_coord = x_transverse * cos_th0 - y_transverse * sin_th0
-        tangential_coord = x_transverse * sin_th0 + y_transverse * cos_th0
+        if geometry_cache is None:
+            # 2. Rotate the crook-corrected transverse point directly into the knot frame.
+            # Equivalent to r*cos(phi+th0), r*sin(phi+th0), but avoids the polar round trip.
+            cos_th0 = xp.cos(self.th0)
+            sin_th0 = xp.sin(self.th0)
+            radial_coord = x_transverse * cos_th0 - y_transverse * sin_th0
+            tangential_coord = x_transverse * sin_th0 + y_transverse * cos_th0
 
-        # 3. Knot axis and deviation metric.
-        knot_axis_z = self.c1 * radial_coord**2 + self.c2 * radial_coord + self.z0
-        longitudinal_offset = z_board - knot_axis_z
+            # 3. Knot axis and deviation metric.
+            knot_axis_z = self.c1 * radial_coord**2 + self.c2 * radial_coord + self.z0
+            longitudinal_offset = z_board - knot_axis_z
 
-        term_ang = xp.arctan2(tangential_coord, radial_coord)**2
-        p = xp.sqrt(
-            longitudinal_offset**2
-            + 1.0 / self.kp**2 * (radial_coord**2 + tangential_coord**2) * term_ang
-        )
-        
-        pmin = float(getattr(self.config, "soft_clamp_pmin", 2.0))
-        al = float(getattr(self.config, "soft_clamp_alpha", 1.0))
-        # Smooth blending (numerically stable):
-        # p_soft = (p*exp(a*p) + pmin*exp(a*pmin)) / (exp(a*p) + exp(a*pmin))
-        #       = sigmoid(a*(p-pmin))*p + (1-sigmoid(a*(p-pmin)))*pmin
-        d = xp.clip(al * (p - pmin), -60.0, 60.0)
-        w = 1.0 / (1.0 + xp.exp(-d))
-        p = w * p + (1.0 - w) * pmin
+            radial_tangential_sq = radial_coord**2 + tangential_coord**2
+            term_ang = xp.arctan2(tangential_coord, radial_coord)**2
+            p = xp.sqrt(
+                longitudinal_offset**2
+                + 1.0 / self.kp**2 * radial_tangential_sq * term_ang
+            )
+
+            pmin = float(getattr(self.config, "soft_clamp_pmin", 2.0))
+            al = float(getattr(self.config, "soft_clamp_alpha", 1.0))
+            # Smooth blending (numerically stable):
+            # p_soft = sigmoid(a*(p-pmin))*p + (1-sigmoid(...))*pmin
+            d = xp.clip(al * (p - pmin), -60.0, 60.0)
+            w = 1.0 / (1.0 + xp.exp(-d))
+            p = w * p + (1.0 - w) * pmin
+            geometry_cache = {
+                "taper_z": taper_z,
+                "radial_coord": radial_coord,
+                "tangential_coord": tangential_coord,
+                "radial_tangential_sq": radial_tangential_sq,
+                "knot_axis_z": knot_axis_z,
+                "longitudinal_offset": longitudinal_offset,
+                "p": p,
+            }
+        else:
+            radial_coord = geometry_cache["radial_coord"]
+            tangential_coord = geometry_cache["tangential_coord"]
+            radial_tangential_sq = geometry_cache["radial_tangential_sq"]
+            knot_axis_z = geometry_cache["knot_axis_z"]
+            longitudinal_offset = geometry_cache["longitudinal_offset"]
+            p = geometry_cache["p"]
         
         # pmax curve
         # pmax = (Abump * Ro^(Aexp-1) / (1-k))^(1/Bbump)
@@ -1358,7 +1388,7 @@ class KnotSystem:
         Ri = xp.maximum(Ri, 1.0)
         
         # Growth field in the rotated knot-frame cross-section.
-        gg = radial_coord**2 + tangential_coord**2 - Ri**2
+        gg = radial_tangential_sq - Ri**2
         # g = min(real(gg), [], 4)
         # We calculate full gg (with knots dim) here.
         # Caller handles min.
@@ -1394,6 +1424,7 @@ class KnotSystem:
             # Negative diameters are non-physical and should not reappear as
             # valid knot volume after squaring in the implicit field.
             Lx = xp.maximum(Lx, 0.0)
+            geometry_cache["Lx"] = Lx
             
             # K field
             K = longitudinal_offset**2 + tangential_coord**2 / self.kp**2 - (Lx / 2.0)**2
@@ -1451,6 +1482,7 @@ class KnotSystem:
             info['tx_kf'] = info['knot_dir_radial']
             info['ty_kf'] = info['knot_dir_longitudinal']
             info['tz_kf'] = info['knot_dir_transverse']
+            info['geometry_cache'] = geometry_cache
             
         return gg, info
 
@@ -1467,21 +1499,21 @@ class KnotSystem:
     ):
         """Compute local fiber flow in the knot frame."""
         xp = self.xp
-        br = kp * Lx
-        use_approx = method != 1
-        G, a = self.solve_flow_parameters(br, Lx, approx=use_approx)
-
         mask = radial_coord > 0
         dc_dtransverse = xp.ones_like(radial_coord)
         dc_dlongitudinal = xp.zeros_like(radial_coord)
 
-        # Masked update avoids full-domain heavy math while also avoiding host sync.
+        # The negative radial half-domain is discarded below. Solve the exact
+        # flow parameters only where they can contribute to the final field.
+        Lx_m = Lx[mask]
+        kp_m = xp.broadcast_to(kp, Lx.shape)[mask]
+        use_approx = method != 1
+        G_m, a_m = self.solve_flow_parameters(kp_m * Lx_m, Lx_m, approx=use_approx)
+
         tangential_m = tangential_coord[mask]
         z_m = z_coord[mask]
         knot_axis_z_m = knot_axis_z[mask]
         longitudinal_offset_m = longitudinal_offset[mask]
-        a_m = a[mask]
-        G_m = G[mask]
 
         den1 = tangential_m**2 + (a_m + longitudinal_offset_m)**2
         den2 = tangential_m**2 + (a_m - longitudinal_offset_m)**2

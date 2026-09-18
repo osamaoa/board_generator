@@ -1695,7 +1695,14 @@ def generate_boards_dataset(args: Any) -> Dict[str, Any]:
                 )
             continue
 
-        layers_data, mesh_accum = GrowthSimulator.run(cfg, mesh, k)
+        layers_data, mesh_accum = GrowthSimulator.run(
+            cfg,
+            mesh,
+            k,
+            contour_variant="unmasked" if show_inside else "masked_live",
+            retain_growth_layer_fields=bool("ring_color" in outputs),
+            extract_pith_surface=False,
+        )
         contours_masked = [
             np.asarray(line, dtype=np.float32)
             for line in (layers_data.get("contours_masked") or [])

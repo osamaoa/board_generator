@@ -133,23 +133,35 @@ class FiberSolver:
             selection_rule = str(getattr(p, "multi_knot_fiber_selection_rule", "weighted_deviation") or "").strip().lower()
 
             def local_knot_relevance_weights():
-                x_board = X[..., np.newaxis]
-                y_board = Y[..., np.newaxis]
-                z_board = Z[..., np.newaxis]
-                x_transverse = x_board + k.crook_x(z_board)
-                y_transverse = y_board + k.crook_y(z_board)
-                cos_th0 = xp.cos(th0)
-                sin_th0 = xp.sin(th0)
-                radial_coord = x_transverse * cos_th0 - y_transverse * sin_th0
-                tangential_coord = x_transverse * sin_th0 + y_transverse * cos_th0
+                geometry_cache = info.get('geometry_cache')
+                if isinstance(geometry_cache, dict):
+                    radial_coord = geometry_cache['radial_coord']
+                    tangential_coord = geometry_cache['tangential_coord']
+                    cached_lx = geometry_cache.get('Lx')
+                    z_board = None
+                else:
+                    x_board = X[..., np.newaxis]
+                    y_board = Y[..., np.newaxis]
+                    z_board = Z[..., np.newaxis]
+                    x_transverse = x_board + k.crook_x(z_board)
+                    y_transverse = y_board + k.crook_y(z_board)
+                    cos_th0 = xp.cos(th0)
+                    sin_th0 = xp.sin(th0)
+                    radial_coord = x_transverse * cos_th0 - y_transverse * sin_th0
+                    tangential_coord = x_transverse * sin_th0 + y_transverse * cos_th0
+                    cached_lx = None
 
                 if length_offset is not None and getattr(length_offset, "ndim", 0) == 4:
                     longitudinal_offset = length_offset
                 else:
                     knot_axis_z = k.c1 * radial_coord**2 + k.c2 * radial_coord + k.z0
+                    if z_board is None:
+                        z_board = Z[..., np.newaxis]
                     longitudinal_offset = z_board - knot_axis_z
 
-                Lx = k.a1 * radial_coord**4 + k.a2 * radial_coord**3 + k.a3 * radial_coord**2 + k.a4 * radial_coord
+                Lx = cached_lx
+                if Lx is None:
+                    Lx = k.a1 * radial_coord**4 + k.a2 * radial_coord**3 + k.a3 * radial_coord**2 + k.a4 * radial_coord
                 if bool(getattr(p, "dead_knots", False)):
                     Lx_RL = k.a1 * k.RL**4 + k.a2 * k.RL**3 + k.a3 * k.RL**2 + k.a4 * k.RL
                     mask_range = (radial_coord >= k.RL) & (radial_coord <= k.RD)

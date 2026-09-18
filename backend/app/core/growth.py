@@ -5,10 +5,56 @@ from .mesh import BoardMesh
 from .knot_system import KnotSystem as KnotSystemType
 from .array_backend import to_numpy
 
+
+class _ContourExtractor:
+    """Reuse one Matplotlib axes while preserving its contour algorithm."""
+
+    def __init__(self):
+        import matplotlib
+
+        matplotlib.use('Agg')
+        import matplotlib.pyplot as plt
+
+        self._plt = plt
+        self._fig, self._ax = plt.subplots()
+
+    def lines(self, x, y, values):
+        contour_set = self._ax.contour(x, y, values, levels=[0])
+        if hasattr(contour_set, 'allsegs') and contour_set.allsegs:
+            segments = [np.asarray(segment).copy() for segment in contour_set.allsegs[0]]
+        else:
+            segments = []
+            for collection in getattr(contour_set, 'collections', []):
+                for path in collection.get_paths():
+                    segments.append(np.asarray(path.vertices).copy())
+        try:
+            contour_set.remove()
+        except Exception:
+            for collection in getattr(contour_set, 'collections', []):
+                try:
+                    collection.remove()
+                except Exception:
+                    pass
+        return segments
+
+    def close(self) -> None:
+        self._plt.close(self._fig)
+
 class GrowthSimulator:
     @staticmethod
-    def run(p: BoardConfig, mesh: BoardMesh, k: 'KnotSystemType'):
+    def run(
+        p: BoardConfig,
+        mesh: BoardMesh,
+        k: 'KnotSystemType',
+        *,
+        contour_variant: str = "all",
+        retain_growth_layer_fields: bool = True,
+        extract_pith_surface: bool = True,
+    ):
         xp = getattr(k, 'xp', np)
+        contour_variant = str(contour_variant or "all").strip().lower()
+        if contour_variant not in {"all", "unmasked", "masked", "masked_live"}:
+            raise ValueError(f"Unsupported contour_variant: {contour_variant!r}")
         needs_normal_accum = bool(p.calc_fibers)
         base_grid = xp.asarray(mesh.X)
         empty_field = xp.asarray(np.empty((0,), dtype=np.float32))
@@ -58,6 +104,7 @@ class GrowthSimulator:
         }
         
         _, info = k.calculate_influence(X_base, Y_base, Z_base, Ro, Ri0, flags)
+        geometry_cache = info.get('geometry_cache')
         tt = info.get('K', xp.zeros_like(X_base))
 
         def _reduce_k_field(field):
@@ -90,6 +137,7 @@ class GrowthSimulator:
         layers['contours_mid_unmasked'] = []
         layers['growth_layer_fields'] = []
         layers['growth_layer_indices'] = []
+        contour_extractor = _ContourExtractor() if p.display_contours else None
         total_layers = len(k.splines)
 
         # Loop over splines (Growth Layers)
@@ -153,10 +201,11 @@ class GrowthSimulator:
             g_surface_visual = g_layer
             emit_layer_visual = _emit_layer_visual(layer_idx)
 
-            layers['growth_layer_fields'].append(
-                np.asarray(to_numpy(g_surface_visual), dtype=np.float32)
-            )
-            layers['growth_layer_indices'].append(int(layer_idx))
+            if retain_growth_layer_fields:
+                layers['growth_layer_fields'].append(
+                    np.asarray(to_numpy(g_surface_visual), dtype=np.float32)
+                )
+                layers['growth_layer_indices'].append(int(layer_idx))
 
             if p.display_contours and emit_layer_visual:
                 if contour_axes_board is None:
@@ -181,70 +230,101 @@ class GrowthSimulator:
                 # preserve the same contour behavior as the previous matplotlib path.
                 g_cpu = to_numpy(g_layer)
 
-                g_faces_unmasked = (
-                    g_cpu[:, 0, :],
-                    g_cpu[:, -1, :],
-                    g_cpu[0, :, :],
-                    g_cpu[-1, :, :],
-                    g_cpu[:, :, 0],
-                    g_cpu[:, :, -1],
-                )
-                contour_lines_unmasked = GrowthSimulator._extract_contours(
-                    x_vals, y_vals, z_vals, g_faces_unmasked, contour_board
-                )
-                layers['contours_unmasked'].extend(contour_lines_unmasked)
-                contour_lines_mid_unmasked = GrowthSimulator._extract_midplane_contours(
-                    x_vals, y_vals, z_vals, g_cpu, contour_board
-                )
-                layers['contours_mid_unmasked'].extend(contour_lines_mid_unmasked)
+                want_unmasked = contour_variant in {"all", "unmasked"}
+                want_masked = contour_variant in {"all", "masked"}
+                want_masked_live = contour_variant in {"all", "masked_live"}
+                contour_lines_unmasked = []
+                contour_lines_mid_unmasked = []
+                if want_unmasked:
+                    g_faces_unmasked = (
+                        g_cpu[:, 0, :],
+                        g_cpu[:, -1, :],
+                        g_cpu[0, :, :],
+                        g_cpu[-1, :, :],
+                        g_cpu[:, :, 0],
+                        g_cpu[:, :, -1],
+                    )
+                    contour_lines_unmasked = GrowthSimulator._extract_contours(
+                        x_vals, y_vals, z_vals, g_faces_unmasked, contour_board,
+                        extractor=contour_extractor,
+                    )
+                    layers['contours_unmasked'].extend(contour_lines_unmasked)
+                    contour_lines_mid_unmasked = GrowthSimulator._extract_midplane_contours(
+                        x_vals, y_vals, z_vals, g_cpu, contour_board,
+                        extractor=contour_extractor,
+                    )
+                    layers['contours_mid_unmasked'].extend(contour_lines_mid_unmasked)
 
                 if p.board_or_log == 0:
-                    if ttt_cpu is not None:
-                        g_masked_cpu = g_cpu.copy()
-                        g_masked_cpu[ttt_cpu < p.knot_inside_limit] = np.nan
-                    else:
-                        g_masked_cpu = g_cpu
-                    g_faces_masked = (
-                        g_masked_cpu[:, 0, :],
-                        g_masked_cpu[:, -1, :],
-                        g_masked_cpu[0, :, :],
-                        g_masked_cpu[-1, :, :],
-                        g_masked_cpu[:, :, 0],
-                        g_masked_cpu[:, :, -1],
-                    )
-                    contour_lines_masked = GrowthSimulator._extract_contours(
-                        x_vals, y_vals, z_vals, g_faces_masked, contour_board
-                    )
-                    layers['contours_masked'].extend(contour_lines_masked)
-                    contour_lines_mid_masked = GrowthSimulator._extract_midplane_contours(
-                        x_vals, y_vals, z_vals, g_masked_cpu, contour_board
-                    )
-                    layers['contours_mid_masked'].extend(contour_lines_mid_masked)
+                    contour_lines_masked = []
+                    contour_lines_mid_masked = []
+                    g_masked_cpu = None
+                    if want_masked or (want_masked_live and not bool(getattr(p, 'dead_knots', False))):
+                        if ttt_cpu is not None:
+                            g_masked_cpu = g_cpu.copy()
+                            g_masked_cpu[ttt_cpu < p.knot_inside_limit] = np.nan
+                        else:
+                            g_masked_cpu = g_cpu
+                        g_faces_masked = (
+                            g_masked_cpu[:, 0, :],
+                            g_masked_cpu[:, -1, :],
+                            g_masked_cpu[0, :, :],
+                            g_masked_cpu[-1, :, :],
+                            g_masked_cpu[:, :, 0],
+                            g_masked_cpu[:, :, -1],
+                        )
+                        contour_lines_masked = GrowthSimulator._extract_contours(
+                            x_vals, y_vals, z_vals, g_faces_masked, contour_board,
+                            extractor=contour_extractor,
+                        )
+                        contour_lines_mid_masked = GrowthSimulator._extract_midplane_contours(
+                            x_vals, y_vals, z_vals, g_masked_cpu, contour_board,
+                            extractor=contour_extractor,
+                        )
+                        if want_masked:
+                            layers['contours_masked'].extend(contour_lines_masked)
+                            layers['contours_mid_masked'].extend(contour_lines_mid_masked)
 
-                    if ttt_live_cpu is not None:
-                        g_masked_live_cpu = g_cpu.copy()
-                        g_masked_live_cpu[ttt_live_cpu < p.knot_inside_limit] = np.nan
-                    else:
-                        # Fallback: preserve previous masked behavior when live split is unavailable.
-                        g_masked_live_cpu = g_masked_cpu
-                    g_faces_masked_live = (
-                        g_masked_live_cpu[:, 0, :],
-                        g_masked_live_cpu[:, -1, :],
-                        g_masked_live_cpu[0, :, :],
-                        g_masked_live_cpu[-1, :, :],
-                        g_masked_live_cpu[:, :, 0],
-                        g_masked_live_cpu[:, :, -1],
-                    )
-                    contour_lines_masked_live = GrowthSimulator._extract_contours(
-                        x_vals, y_vals, z_vals, g_faces_masked_live, contour_board
-                    )
-                    layers['contours_masked_live'].extend(contour_lines_masked_live)
-                    contour_lines_mid_masked_live = GrowthSimulator._extract_midplane_contours(
-                        x_vals, y_vals, z_vals, g_masked_live_cpu, contour_board
-                    )
-                    layers['contours_mid_masked_live'].extend(contour_lines_mid_masked_live)
+                    contour_lines_masked_live = []
+                    contour_lines_mid_masked_live = []
+                    if want_masked_live and not bool(getattr(p, 'dead_knots', False)):
+                        # K_live and K are identical in live-only mode.
+                        contour_lines_masked_live = contour_lines_masked
+                        contour_lines_mid_masked_live = contour_lines_mid_masked
+                    elif want_masked_live:
+                        if ttt_live_cpu is not None:
+                            g_masked_live_cpu = g_cpu.copy()
+                            g_masked_live_cpu[ttt_live_cpu < p.knot_inside_limit] = np.nan
+                        else:
+                            # Fallback: preserve previous masked behavior when live split is unavailable.
+                            g_masked_live_cpu = g_masked_cpu
+                        g_faces_masked_live = (
+                            g_masked_live_cpu[:, 0, :],
+                            g_masked_live_cpu[:, -1, :],
+                            g_masked_live_cpu[0, :, :],
+                            g_masked_live_cpu[-1, :, :],
+                            g_masked_live_cpu[:, :, 0],
+                            g_masked_live_cpu[:, :, -1],
+                        )
+                        contour_lines_masked_live = GrowthSimulator._extract_contours(
+                            x_vals, y_vals, z_vals, g_faces_masked_live, contour_board,
+                            extractor=contour_extractor,
+                        )
+                        contour_lines_mid_masked_live = GrowthSimulator._extract_midplane_contours(
+                            x_vals, y_vals, z_vals, g_masked_live_cpu, contour_board,
+                            extractor=contour_extractor,
+                        )
+                    if want_masked_live:
+                        layers['contours_masked_live'].extend(contour_lines_masked_live)
+                        layers['contours_mid_masked_live'].extend(contour_lines_mid_masked_live)
 
-                    if p.display_rings_inside_knots:
+                    if contour_variant == "unmasked":
+                        layers['contours'].extend(contour_lines_unmasked)
+                    elif contour_variant == "masked":
+                        layers['contours'].extend(contour_lines_masked)
+                    elif contour_variant == "masked_live":
+                        layers['contours'].extend(contour_lines_masked_live)
+                    elif p.display_rings_inside_knots:
                         layers['contours'].extend(contour_lines_unmasked)
                     else:
                         layers['contours'].extend(contour_lines_masked)
@@ -255,7 +335,7 @@ class GrowthSimulator:
             # - Full 3D rings are exported only when requested (display_rings).
             # - The first layer (pith proxy) is always exported for live "Display Pith".
             needs_ring_surface = bool(p.display_rings)
-            needs_pith_surface = (layer_idx == 0)
+            needs_pith_surface = bool(extract_pith_surface and layer_idx == 0)
             emit_ring_surface = bool(needs_ring_surface and emit_layer_visual)
 
             if emit_ring_surface or needs_pith_surface:
@@ -297,6 +377,7 @@ class GrowthSimulator:
             
             flags_iter = flags.copy()
             flags_iter['get_knots'] = False
+            flags_iter['geometry_cache'] = geometry_cache
             if p.board_or_log == 2:
                 flags_iter['dead_knots'] = False
 
@@ -360,6 +441,8 @@ class GrowthSimulator:
                     pz,
                 )
             layers['last_g'] = pending_g
+        if contour_extractor is not None:
+            contour_extractor.close()
         return layers, mesh_accum
 
     @staticmethod
@@ -453,7 +536,7 @@ class GrowthSimulator:
         return grad
 
     @staticmethod
-    def _extract_contours(x_vals, y_vals, z_vals, g_faces, board):
+    def _extract_contours(x_vals, y_vals, z_vals, g_faces, board, extractor=None):
         """Extract contour lines at g=0 on the 6 board faces.
         
         Like MATLAB's contourslice(X, Y, Z, g, board.x, board.y, board.z, [0 0])
@@ -474,10 +557,8 @@ class GrowthSimulator:
             (gz1, x_vals, y_vals, 'z', board['z'][1], False),
         ]
 
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots()
+        owned_extractor = extractor is None
+        extractor = extractor or _ContourExtractor()
 
         try:
             for slice_2d, a1, a2, fixed_axis, fixed_val, transpose in face_specs:
@@ -495,14 +576,7 @@ class GrowthSimulator:
                 contour_matrix = np.asarray(slice_2d.T if transpose else slice_2d, dtype=np.float64)
                 segments = []
                 try:
-                    ax.clear()
-                    cs = ax.contour(a1, a2, contour_matrix, levels=[0])
-                    if hasattr(cs, 'allsegs') and cs.allsegs:
-                        segments = cs.allsegs[0]
-                    elif hasattr(cs, 'collections'):
-                        for collection in cs.collections:
-                            for path in collection.get_paths():
-                                segments.append(path.vertices)
+                    segments = extractor.lines(a1, a2, contour_matrix)
                 except Exception:
                     segments = []
 
@@ -532,13 +606,13 @@ class GrowthSimulator:
                         ])
                     contour_lines.append(points_3d.tolist())
         finally:
-            if fig is not None:
-                plt.close(fig)
+            if owned_extractor:
+                extractor.close()
         
         return contour_lines
 
     @staticmethod
-    def _extract_midplane_contours(x_vals, y_vals, z_vals, g_volume, board):
+    def _extract_midplane_contours(x_vals, y_vals, z_vals, g_volume, board, extractor=None):
         """Extract contour lines at g=0 on the mid XZ plane (fixed Y = board midpoint)."""
         contour_lines = []
         g_cpu = np.asarray(g_volume, dtype=np.float64)
@@ -578,23 +652,14 @@ class GrowthSimulator:
         if not (np.min(finite) <= 0.0 <= np.max(finite)):
             return contour_lines
 
-        import matplotlib
-        matplotlib.use('Agg')
-        import matplotlib.pyplot as plt
-        fig, ax = plt.subplots()
+        owned_extractor = extractor is None
+        extractor = extractor or _ContourExtractor()
         try:
             # g_mid is (nx, nz), contour expects (len(z), len(x)).
             contour_matrix = np.asarray(g_mid.T, dtype=np.float64)
             segments = []
             try:
-                ax.clear()
-                cs = ax.contour(x_vals, z_vals, contour_matrix, levels=[0])
-                if hasattr(cs, 'allsegs') and cs.allsegs:
-                    segments = cs.allsegs[0]
-                elif hasattr(cs, 'collections'):
-                    for collection in cs.collections:
-                        for path in collection.get_paths():
-                            segments.append(path.vertices)
+                segments = extractor.lines(x_vals, z_vals, contour_matrix)
             except Exception:
                 segments = []
 
@@ -608,7 +673,7 @@ class GrowthSimulator:
                 ])
                 contour_lines.append(points_3d.tolist())
         finally:
-            if fig is not None:
-                plt.close(fig)
+            if owned_extractor:
+                extractor.close()
 
         return contour_lines

@@ -18,8 +18,9 @@ import zipfile
 import uuid
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
 import scipy.io
-from scipy.interpolate import griddata
+from scipy.interpolate import LinearNDInterpolator, griddata
 from scipy.ndimage import map_coordinates
+from scipy.spatial import Delaunay
 
 class NanSafeEncoder(json.JSONEncoder):
     """JSON encoder that converts NaN/Inf to null."""
@@ -2781,6 +2782,7 @@ def _render_fiber_face_png(
     flip_sign: bool,
     flip_x: bool,
     size: Any = 512,
+    triangulation: Any = None,
 ) -> bytes:
     x = np.asarray(x_face, dtype=np.float64)
     y = np.asarray(y_face, dtype=np.float64)
@@ -2810,7 +2812,10 @@ def _render_fiber_face_png(
             xi = np.linspace(x_min, x_max, width_px_out, dtype=np.float64)
             yi = np.linspace(y_min, y_max, height_px_out, dtype=np.float64)
             XI, YI = np.meshgrid(xi, yi, indexing="xy")
-            interp = griddata(points, values, (XI, YI), method="linear")
+            if triangulation is None:
+                interp = griddata(points, values, (XI, YI), method="linear")
+            else:
+                interp = LinearNDInterpolator(triangulation, values)(XI, YI)
             if np.isnan(interp).any():
                 interp_nn = griddata(points, values, (XI, YI), method="nearest")
                 interp = np.where(np.isfinite(interp), interp, interp_nn)
@@ -2849,6 +2854,8 @@ def _build_fiber_surface_pngs(
 
     Y2, Z2 = np.meshgrid(mesh_y, mesh_z, indexing="ij")  # (ny, nz)
     X2, Zx2 = np.meshgrid(mesh_x, mesh_z, indexing="ij")  # (nx, nz)
+    yz_triangulation = Delaunay(np.column_stack([Y2.ravel(), Z2.ravel()]))
+    xz_triangulation = Delaunay(np.column_stack([X2.ravel(), Zx2.ravel()]))
 
     tyy_xmin = np.asarray(tyy[:, 0, :], dtype=np.float64).copy()
     tzz_xmin = np.asarray(tzz[:, 0, :], dtype=np.float64).copy()
@@ -2896,22 +2903,26 @@ def _build_fiber_surface_pngs(
         # x-min face (use in-plane components: Y/Z).
         "x_min": _render_fiber_face_png(
             Y2, Z2, tyy_xmin, tzz_xmin,
-            flip_sign=True, flip_x=True, size=size
+            flip_sign=True, flip_x=True, size=size,
+            triangulation=yz_triangulation,
         ),
         # x-max face.
         "x_max": _render_fiber_face_png(
             Y2, Z2, tyy_xmax, tzz_xmax,
-            flip_sign=False, flip_x=False, size=size
+            flip_sign=False, flip_x=False, size=size,
+            triangulation=yz_triangulation,
         ),
         # z-min (viewer) == y-min (model thickness).
         "z_min": _render_fiber_face_png(
             X2, Zx2, txx_ymin, tzz_ymin,
-            flip_sign=False, flip_x=False, size=size
+            flip_sign=False, flip_x=False, size=size,
+            triangulation=xz_triangulation,
         ),
         # z-max (viewer) == y-max (model thickness).
         "z_max": _render_fiber_face_png(
             X2, Zx2, txx_ymax, tzz_ymax,
-            flip_sign=True, flip_x=True, size=size
+            flip_sign=True, flip_x=True, size=size,
+            triangulation=xz_triangulation,
         ),
     }
 
